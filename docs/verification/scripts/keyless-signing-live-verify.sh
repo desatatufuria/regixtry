@@ -73,6 +73,14 @@
 # source, never starts Postgres, and never starts a server -- the target is
 # already running. It only needs docker, cosign, curl, and python3.
 
+# PRECONDITION (project enforcement): a registry with auth enforces projects by
+# default, so the first path segment of REPOSITORY must already exist. This
+# script deliberately does NOT create it: it targets a live system and never
+# mutates it beyond what is described above. If the push is refused with
+# NAME_UNKNOWN the script stops with a clear message: create the project
+# (POST /admin/v1/projects) or set REGIXTRY_REQUIRE_PROJECT=false for the test
+# registry, then rerun.
+
 set -euo pipefail
 
 RUN_ID="${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-1}-$(date +%s)"
@@ -97,6 +105,15 @@ DAEMON_JSON_MODIFIED=0
 fail() {
   printf 'keyless-signing-live-verify: %s\n' "$*" >&2
   exit 1
+}
+
+# fail_if_project_missing aborts with an operator-facing precondition message
+# when the captured push output shows the project does not exist.
+fail_if_project_missing() {
+  local output="$1"
+  if printf '%s' "${output}" | grep -q 'NAME_UNKNOWN\|does not exist; ask an administrator to create it'; then
+    fail "precondition: project '${REPOSITORY%%/*}' does not exist on ${LIVE_REGISTRY_HOST}; create it (POST /admin/v1/projects) or set REGIXTRY_REQUIRE_PROJECT=false on the test registry, then rerun"
+  fi
 }
 
 warn() {
@@ -368,7 +385,13 @@ EOF
     -t "${image_ref}" \
     "${build_dir}"
 
-  docker push "${image_ref}"
+  local push_output=""
+  if ! push_output="$(docker push "${image_ref}" 2>&1)"; then
+    printf '%s\n' "${push_output}" >&2
+    fail_if_project_missing "${push_output}"
+    fail "docker push ${image_ref} failed"
+  fi
+  printf '%s\n' "${push_output}"
 }
 
 main() {

@@ -48,7 +48,12 @@ regixtry bootstrap-admin -auth-postgres-dsn "$DSN" -username admin -password-std
 # 3. Serve, with auth enabled
 regixtry serve -addr 127.0.0.1:5000 -storage-root ./data -auth-postgres-dsn "$DSN"
 
-# 4. Log in and push
+# 4. Create the project the first push goes to (with auth enabled pushes
+#    need an existing project; the admin API needs an unrestricted token, not a docker one)
+TOKEN=$(curl -s -u admin:change-me-now 'http://127.0.0.1:5000/auth/token?service=regixtry' | jq -r .token)
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"name":"test"}' http://127.0.0.1:5000/admin/v1/projects
+
+# 5. Log in and push
 docker login 127.0.0.1:5000 -u admin -p change-me-now
 docker push 127.0.0.1:5000/test/alpine:3.20
 ```
@@ -167,7 +172,12 @@ docker run -d --name regixtry --network regixtry-net -p 5000:5000 \
   -e REGISTRY_AUTH_POSTGRES_DSN="$DSN" \
   ghcr.io/desatatufuria/regixtry:latest
 
-# 4. Log in and push
+# 4. Create the project the first push goes to (pushes need an existing
+#    project; the admin API needs an unrestricted token, not a docker one)
+TOKEN=$(curl -s -u admin:change-me-now 'http://127.0.0.1:5000/auth/token?service=regixtry' | jq -r .token)
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"name":"test"}' http://127.0.0.1:5000/admin/v1/projects
+
+# 5. Log in and push
 docker login 127.0.0.1:5000 -u admin -p change-me-now
 docker push 127.0.0.1:5000/test/alpine:3.20
 ```
@@ -177,6 +187,7 @@ The `registry:registry` Postgres credential above is a throwaway local-experimen
 ## What's implemented
 
 - Push/pull of manifests and blobs over the real `/v2/` surface — catalog and tag listing with `n`/`last` pagination, chunked uploads (`POST`/`PATCH`/`PUT`) with SHA-256 validation before a blob is published.
+- Projects: the first path segment of a repository name is a project that a global admin creates before anyone pushes into it (`-require-project`: on by default when auth is enabled, off when anonymous; an explicit value always wins). A project role (reader, writer, admin) covers every repository inside, project admins delegate inside their project, and robots can hold a project role. Existing flat repositories keep working. See [`docs/users.md`](docs/users.md#projects-and-project-roles) and [`docs/release-notes-projects.md`](docs/release-notes-projects.md).
 - OCI 1.1 Referrers discovery: `GET /v2/<name>/referrers/<digest>` lists the repository's manifests whose `subject.digest` matches, with `?artifactType=` filtering (`OCI-Filters-Applied` header set only when the filter narrowed results). Always `200`, `manifests: []` (never `404`) for a digest with no referrers, including pre-existing content indexed by a one-time backfill. Pushing a subject-bearing manifest (e.g. a cosign v3 bundle referrer or an in-toto attestation) still requires the subject digest to already exist in the same repository — this change makes already-accepted referrers *discoverable*, it does not relax that push-time check, so `docker/build-push-action` still needs `provenance: false` when the base image isn't resolvable in-repo at attestation-push time.
 - Registry metadata in SQLite, blob content on the filesystem.
 - Optional PostgreSQL-backed access control: users, per-repository role grants, delegated repo-admin grant management, registry-wide read-only accounts, and bounded-TTL revocable robot accounts for CI — see [`docs/authentication.md`](docs/authentication.md) and [`docs/security.md`](docs/security.md).

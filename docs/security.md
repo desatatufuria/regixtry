@@ -36,6 +36,28 @@ What it structurally cannot do, enforced server-side (not just hidden in the UI)
 
 Only global `IsAdmin` can grant `repo-admin` or touch another repo-admin's grant. Treat a `repo-admin` grant as "trusted to manage membership of this one repository," not "trusted with the registry."
 
+## Projects: grant model and its bounds
+
+A project is the first path segment of a repository name. A project grant (`auth_project_grants`, Postgres) gives one user or robot one role over every repository of that project, now and later. Every place that matches grants against a repository name honours project grants (the access predicates, the token-scope intersection, the catalog filter, the repository-grant delegate checks); a test fails if a new exact-match site appears. How a grant is matched and evaluated is in [authentication.md](authentication.md#project-grants).
+
+Escalation rules (server-side, not just hidden in the UI):
+
+- Matching is `==` on the whole first segment: `odabank` never covers `odabank2/...` nor a flat repository named `odabank`.
+- Effective role is the highest of project and exact grant; exact grants only add. A project grant never widens `IsReadOnly` beyond pull and never grants anything to a robot beyond reader or writer.
+- Only a global admin creates or deletes projects, gives `repo-admin` on a project, or touches another project admin. A project admin (`repo-admin` on the project) can list members and give or revoke `repo-reader`/`repo-writer` inside that one project; it cannot create robots or reach any other admin route.
+- A read-only user can hold only a project reader grant. A robot holds exactly one grant (repository or project) and never `repo-admin`.
+
+Existence oracle: authorization comes before existence. A push by a caller without push permission, and a member-route call by a caller without rights on the project, get the same answer whether or not the project exists (`401`/`403`); only a caller who is allowed learns `NAME_UNKNOWN` or `404`. Pulls, tags and the catalog never consult the projects table.
+
+Documented limits:
+
+- Catalog paging: a project-scoped caller gets full pages, but the filter reads the repository listing in batches until the page is full, so the worst case (a caller whose projects are small among very many repositories, or with no access at all) reads every repository once per request.
+- A project admin can discover whether a username exists by guessing: the answer to a member call distinguishes an unknown user (`404`) from a known one, the same way the repository grant routes do.
+- Time-of-check/time-of-use on put-grant: a grant put while the project is being deleted can land just after the grant purge and leave an orphan grant. It is harmless (it matches no repository) and the next create of that project name purges it first; `DELETE /admin/v1/projects/{project}/members/{username}` also removes it.
+- The project store (SQLite) and the grant store (Postgres) have no foreign key between them; see [architecture.md](architecture.md#projects-two-stores-and-how-they-converge).
+- `members` is not a reserved project name: a project may be called `members`; its routes are `/admin/v1/projects/members/members`, which cannot collide with anything.
+- The local TUI Console (including its Projects view) is not access controlled, see below; it is a derived view of the catalog, not the project store.
+
 ## Robot accounts
 
 Robot accounts (`User.IsRobot`) are CI/CD machine identities with a narrower attack surface than human accounts by design:
@@ -43,7 +65,7 @@ Robot accounts (`User.IsRobot`) are CI/CD machine identities with a narrower att
 - **Two independent layers block password login.** `Service.LoginWithPassword` rejects any `IsRobot` user before it inspects the password at all; separately, a robot's stored password hash is the `RobotPasswordHash` sentinel, which is not a valid bcrypt hash, so `bcrypt.CompareHashAndPassword` fails on it even if the `IsRobot` guard were ever removed. This is deliberate defense in depth, not redundancy by accident.
 - **Admin-only, no delegation.** Creation (`POST /admin/v1/robots`), listing, and deletion (`DELETE /admin/v1/robots/{id}`) all require global `IsAdmin` — a repo-admin delegate cannot create or manage robots even on its own repository.
 - **Hard delete, unlike human users.** `DeleteRobot` performs a real row delete, not a disable. The handler rejects any target where `!IsRobot`, so this endpoint cannot be repurposed to hard-delete a human account. Deletion relies on `ON DELETE CASCADE` on the robot's grant and token foreign keys, so no orphaned grant or token survives a robot deletion.
-- **One grant, one secret, shown once.** A robot is bound to a single `(repository, role)` pair at creation, and its credential secret is a normal `TokenKindAdminCredential` token — same TTL ceiling, same revocability as a human admin token — returned only in the creation response.
+- **One grant, one secret, shown once.** A robot is bound to a single grant at creation, either `(repository, role)` or `(project, role)` with role reader or writer,, and its credential secret is a normal `TokenKindAdminCredential` token — same TTL ceiling, same revocability as a human admin token — returned only in the creation response.
 
 ## The registry-wide read-only role
 

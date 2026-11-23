@@ -36,6 +36,10 @@ curl -u USERNAME:PASSWORD 'https://registry.example.com/auth/token?scope=reposit
 
 The token must carry push scope, and the user must hold a writer/admin grant for that repository. Check `GET /admin/v1/users/{id}/grants`.
 
+## `push` returns `NAME_UNKNOWN` or `NAME_INVALID`
+
+`404 NAME_UNKNOWN` (`project "odabank" does not exist; ask an administrator to create it`): the first path segment of the repository name is a project that has not been created. A global admin creates it with `POST /admin/v1/projects` or in the TUI (`Admin > Access > Projects`). `400 NAME_INVALID` (`repository "x" has no project; use <project>/x`): new repositories without a slash are refused. Both come from `-require-project`, on by default when auth is enabled (off when anonymous); see [operations.md](operations.md#upgrade-to-the-projects-release) and [configuration.md](configuration.md).
+
 ## `push` returns an invalid digest/manifest
 
 The blob must be completed with the correct SHA-256 digest. A manifest is rejected if it references missing blobs. Review the `POST`, `PATCH`, `PUT` sequence and the `digest` parameter.

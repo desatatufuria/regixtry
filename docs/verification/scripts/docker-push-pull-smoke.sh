@@ -111,6 +111,26 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
+# Project enforcement is on by default with auth, so the first path segment of
+# the repository must exist before the first push. Idempotent: 201 (created)
+# and 409 (already exists) are both fine; anything else aborts.
+ensure_project() {
+  local project="$1" token="" code=""
+  token="$(curl_registry -sS --max-time 20 -u "${ADMIN_USERNAME}:${ADMIN_PASSWORD}" \
+    "${PUBLIC_URL}/auth/token?service=regixtry" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  if [[ -z "${token}" ]]; then
+    printf 'ensure_project: could not get an admin token from %s/auth/token\n' "${PUBLIC_URL}" >&2
+    exit 1
+  fi
+  code="$(curl_registry -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST \
+    -H "Authorization: Bearer ${token}" -d "{\"name\":\"${project}\"}" "${PUBLIC_URL}/admin/v1/projects")"
+  if [[ "${code}" != "201" && "${code}" != "409" ]]; then
+    printf 'ensure_project: creating project %s returned HTTP %s, expected 201 or 409\n' "${project}" "${code}" >&2
+    exit 1
+  fi
+}
+ensure_project "${REPOSITORY%%/*}"
+
 docker pull alpine:3.20
 printf '%s\n' "${ADMIN_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${ADMIN_USERNAME}" --password-stdin
 docker tag alpine:3.20 "${IMAGE}"
