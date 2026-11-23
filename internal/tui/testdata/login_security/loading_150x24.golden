@@ -1,0 +1,24 @@
+  Admin › Security › Login security                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Login security                                                                                                      
+    Overview                   │  FAILED LOGINS, 15 MIN …   DISTINCT IPS …   DISTINCT ACCOUNTS …   ACCOUNTS WAITING …                                 
+                               │                                                                                                                      
+  ACCESS                       │  Loading login security…                                                                                             
+      Users                    │                                                                                                                      
+      Robots                   │                                                                                                                      
+      Repository access        │                                                                                                                      
+      Projects                 │                                                                                                                      
+                               │                                                                                                                      
+  SECURITY                     │                                                                                                                      
+      Image scanning           │                                                                                                                      
+      Secret scanning          │                                                                                                                      
+      Signing policy           │                                                                                                                      
+    ▸ Login security           │                                                                                                                      
+                               │                                                                                                                      
+  OPERATIONS                   │                                                                                                                      
+      Scan runs                │                                                                                                                      
+      Secret findings          │                                                                                                                      
+      Update channel           │                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  esc back   q quit                                                                                                                      F2 mouse on  

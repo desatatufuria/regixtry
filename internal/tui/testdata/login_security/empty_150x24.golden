@@ -1,0 +1,24 @@
+  Admin › Security › Login security                                                                                            signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Login security                                                                               backoff mode: enforce  
+    Overview                   │  FAILED LOGINS, 15 MIN 0   DISTINCT IPS 0   DISTINCT ACCOUNTS 0   ACCOUNTS WAITING 0                                 
+                               │  ╭─ EFFECTIVE SETTINGS ─────────────────────────────────────────────────── Set by service flags. Read-only here. ─╮  
+  ACCESS                       │  │ Backoff mode                                   enforce  Max delay                                        5 min │  
+      Users                    │  │ Failure threshold               5 failures per account  Concurrency limit             8 logins checked at once │  
+      Robots                   │  │ Base delay                                 under 1 min  Trusted proxies                        configured: yes │  
+      Repository access        │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Projects                 │  ╭─ ACCOUNTS WAITING ─────────────────────────────────────────────────────────────────────────────────────────────╮  
+                               │  │   ACCOUNT                                                                                   FAILS  TIME LEFT   │  
+  SECURITY                     │  │ Nobody is waiting.                                                                                             │  
+      Image scanning           │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Secret scanning          │  ╭─ RECENT FAILURES ─────────────────────────────────────────────────────────────────────────────────── / filter ─╮  
+      Signing policy           │  │   LAST SEEN     ENDPOINT  REASON        ACCOUNT                      IP                                COUNT   │  
+    ▸ Login security           │  │ No failed logins in the last 24 hours.                                                                         │  
+                               │  │                                                                                                                │  
+  OPERATIONS                   │  │                                                                                                                │  
+      Scan runs                │  │                                                                                                                │  
+      Secret findings          │  │                                                                                                                │  
+      Update channel           │  ╰─ newest first ─────────────────────────────────────────────────────────────────────────────────────────────────╯  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   tab next panel   / filter   r refresh   esc back   q quit                                                                    F2 mouse on  

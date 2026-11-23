@@ -110,7 +110,7 @@ func (s loginSecurityScreen) layout(env screenEnv) loginLayout {
 	settingsH := 2 + loginSettingsRowsStacked
 	remaining := max(rest-settingsH, 0)
 	natural := 2 + 1 + max(len(s.backoff.Accounts), 1)
-	waitingH := min(natural, max(remaining/3, loginMinTableRow+1))
+	waitingH := min(natural, max(remaining/2, loginMinTableRow+1))
 	failuresH := max(remaining-waitingH, loginMinTableRow+1)
 	l.settings = loginRect{0, l.head, bodyW, settingsH}
 	l.waiting = loginRect{0, l.head + settingsH, bodyW, waitingH}
