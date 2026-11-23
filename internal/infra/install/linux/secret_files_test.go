@@ -324,6 +324,58 @@ func TestWriteManagedArtifactsRejectsControlCharactersBeforeWriting(t *testing.T
 	}
 }
 
+// TestRedactDSNKeywordValueFollowsPgxGrammar pins the keyword/value form to the
+// grammar pgx and libpq read: an unquoted value runs to the first unescaped
+// whitespace and keeps embedded quotes literally, so every character of it must
+// be masked. Anything the redactor cannot prove it masked entirely collapses to
+// the constant, never to a partially masked string.
+func TestRedactDSNKeywordValueFollowsPgxGrammar(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+		leak []string
+	}{
+		{"single quote inside unquoted value", "host=db user=u password=ab'cdEFG dbname=d", "host=db user=u password=xxxxx dbname=d", []string{"cdEFG", "'cd"}},
+		{"double quote inside unquoted value", `host=h password=ab"cdEFG dbname=d`, "host=h password=xxxxx dbname=d", []string{"cdEFG", `"cd`}},
+		{"quote at the end of an unquoted value", "host=h password=abEFG' dbname=d", "host=h password=xxxxx dbname=d", []string{"EFG"}},
+		{"several quotes inside an unquoted value", `password=a'b"c'dEFG host=h`, "password=xxxxx host=h", []string{"EFG", "b\"c"}},
+		{"escaped space continues the unquoted value", `host=h password=ab\ cdEFG dbname=d`, "host=h password=xxxxx dbname=d", []string{"cdEFG"}},
+		{"escaped quote continues the unquoted value", `host=h password=ab\'cdEFG dbname=d`, "host=h password=xxxxx dbname=d", []string{"cdEFG"}},
+		{"escaped newline continues the unquoted value", "host=h password=ab\\\ncdEFG dbname=d", "host=h password=xxxxx dbname=d", []string{"cdEFG"}},
+		{"tab ends the unquoted value", "host=h password=ab'cdEFG\tdbname=d", "host=h password=xxxxx\tdbname=d", []string{"cdEFG"}},
+		{"vertical tab ends the unquoted value", "host=h password=ab'cdEFG\vdbname=d", "host=h password=xxxxx\vdbname=d", []string{"cdEFG"}},
+		{"value runs to the end of the string", "host=h password=ab'cdEFG", "host=h password=xxxxx", []string{"cdEFG"}},
+		{"trailing backslash is part of the masked value", `host=h password=abEFG\`, "host=h password=xxxxx", []string{"EFG"}},
+		{"double-quoted value with a space fails closed", `host=h password="dq EFG" dbname=d`, "[redacted]", []string{"EFG"}},
+		{"password text inside another value fails closed", "host=h options='-c password=EFG' password=pw", "[redacted]", []string{"EFG"}},
+		{"keyword without a value separator fails closed", "host=h password=ab'cd EFG", "[redacted]", []string{"EFG"}},
+		{"unrelated keyword/value strings are untouched", "host=h options='-c x=1' dbname=d", "host=h options='-c x=1' dbname=d", nil},
+		{"unterminated quoted value fails closed", "host=h password='ab cdEFG", "[redacted]", []string{"ab", "cdEFG"}},
+		{"text glued after a quoted value fails closed", "host=h password='ab cd'EFG dbname=d", "[redacted]", []string{"cd", "EFG"}},
+		{"quoted value with an escaped quote", `host=h password='ab\'cdEFG' dbname=d`, "host=h password=xxxxx dbname=d", []string{"cdEFG"}},
+		{"second password key with a quote", "password=one password=tw'oEFG", "password=xxxxx password=xxxxx", []string{"EFG", "one"}},
+		{"empty value fails closed", "host=h password=", "[redacted]", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := RedactDSN(tt.in)
+			if got != tt.want {
+				t.Errorf("RedactDSN(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			for _, frag := range tt.leak {
+				if strings.Contains(got, frag) {
+					t.Errorf("RedactDSN(%q) = %q leaks %q", tt.in, got, frag)
+				}
+			}
+		})
+	}
+}
+
 func TestRedactDSNNeverLeaksFragments(t *testing.T) {
 	t.Parallel()
 
