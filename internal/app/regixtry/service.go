@@ -84,6 +84,12 @@ type Service struct {
 	maxOpenUploads        int
 	maxOpenUploadsPerRepo int
 	uploadTTL             time.Duration
+	// maxOpenUploadsPerIdentity caps open uploads per authenticated identity
+	// and uploadMaxLifetime is the absolute session age after which an upload
+	// is refused and reaped whatever its activity (zero or negative disables
+	// either). See service_options.go.
+	maxOpenUploadsPerIdentity int
+	uploadMaxLifetime         time.Duration
 	// skipSweepDBRefresh turns the once-per-sweep vulnerability DB download
 	// off (air-gapped installs); the zero value keeps the refresh on. See
 	// SetScanDBRefreshOnSweep.
@@ -155,6 +161,9 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 		maxOpenUploads:        DefaultMaxOpenUploads,
 		maxOpenUploadsPerRepo: DefaultMaxOpenUploadsPerRepo,
 		uploadTTL:             DefaultUploadTTL,
+
+		maxOpenUploadsPerIdentity: DefaultMaxOpenUploadsPerIdentity,
+		uploadMaxLifetime:         DefaultUploadMaxLifetime,
 	}
 }
 
@@ -277,12 +286,58 @@ func (s *Service) BeginUpload(ctx context.Context, repositoryName string) (Uploa
 		return UploadDetails{}, err
 	}
 
-	if err := s.metadata.SaveUpload(ctx, s.tenant(ctx), state); err != nil {
+	if err := s.saveNewUpload(ctx, state); err != nil {
 		_ = s.blobs.CancelUpload(ctx, state.ID)
 		return UploadDetails{}, err
 	}
 
 	return newUploadDetails(state), nil
+}
+
+// uploadAdmitter is the optional MetadataStore capability that inserts a new
+// upload row atomically with the global and per-identity cap checks. A store
+// without it falls back to SaveUpload (the caps checked under beginUploadMu).
+type uploadAdmitter interface {
+	SaveUploadAdmitted(ctx context.Context, tenant string, state domain.UploadState, owner string, maxOpen int, maxPerOwner int) (string, error)
+}
+
+// uploadOwner is the identity open uploads are counted against: the
+// authenticated user (or robot) id, so every token of one user shares one
+// quota. Without a principal (anonymous mode) it is "", which the store
+// exempts from the per-identity cap (only the global cap applies).
+func uploadOwner(ctx context.Context) string {
+	principal := ports.PrincipalFromContext(ctx)
+	if principal == nil {
+		return ""
+	}
+	for _, id := range []string{principal.UserID, principal.Username, principal.Subject} {
+		if id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// saveNewUpload persists the row of a new upload, enforcing the global and
+// per-identity caps in the same write. Callers hold beginUploadMu.
+func (s *Service) saveNewUpload(ctx context.Context, state domain.UploadState) error {
+	admitter, ok := s.metadata.(uploadAdmitter)
+	if !ok {
+		return s.metadata.SaveUpload(ctx, s.tenant(ctx), state)
+	}
+
+	denied, err := admitter.SaveUploadAdmitted(ctx, s.tenant(ctx), state, uploadOwner(ctx), s.maxOpenUploads, s.maxOpenUploadsPerIdentity)
+	if err != nil {
+		return err
+	}
+	switch denied {
+	case "":
+		return nil
+	case "global":
+		return domain.NewTooManyRequestsError(fmt.Sprintf("too many open uploads (limit %d); finish or cancel some and retry", s.maxOpenUploads))
+	default:
+		return domain.NewTooManyRequestsError(fmt.Sprintf("too many open uploads for this identity (limit %d); finish or cancel some and retry", s.maxOpenUploadsPerIdentity))
+	}
 }
 
 // checkOpenUploadCaps refuses a new upload once the global or per-repository
@@ -386,7 +441,8 @@ func (s *Service) ReapAbandonedUploads(ctx context.Context) (int, error) {
 	}
 
 	tenant := s.tenant(ctx)
-	cutoff := s.now().Add(-s.uploadTTL)
+	now := s.now()
+	cutoff := now.Add(-s.uploadTTL)
 	uploads, err := s.metadata.ListUploads(ctx, tenant, nil)
 	if err != nil {
 		return 0, err
@@ -395,12 +451,20 @@ func (s *Service) ReapAbandonedUploads(ctx context.Context) (int, error) {
 	reaper, _ := s.blobs.(UploadReaper)
 	reaped := 0
 	for _, upload := range uploads {
-		if !upload.UpdatedAt.Before(cutoff) {
+		// A session past its absolute lifetime goes whatever its activity (an
+		// append refreshes the idle timestamp, not the creation time); the
+		// reaper still skips one with a write or commit in flight.
+		reapBefore := cutoff
+		if s.uploadPastLifetime(upload) {
+			// The data file's mtime comes from the OS clock; a minute of
+			// tolerance keeps recent activity from shielding the session.
+			reapBefore = now.Add(time.Minute)
+		} else if !upload.UpdatedAt.Before(cutoff) {
 			continue
 		}
 
 		if reaper != nil {
-			removed, err := reaper.ReapUpload(ctx, upload.ID, cutoff)
+			removed, err := reaper.ReapUpload(ctx, upload.ID, reapBefore)
 			if err != nil {
 				return reaped, err
 			}
@@ -459,6 +523,10 @@ func (s *Service) AppendUpload(ctx context.Context, repositoryName string, uploa
 		return UploadDetails{}, err
 	}
 
+	if s.uploadPastLifetime(state) {
+		return UploadDetails{}, domain.NewNotFoundError("upload", uploadID)
+	}
+
 	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPush, Repository: state.Repository.String()}); err != nil {
 		return UploadDetails{}, err
 	}
@@ -479,6 +547,10 @@ func (s *Service) CompleteUpload(ctx context.Context, repositoryName string, upl
 	state, err := s.ensureUpload(ctx, repositoryName, uploadID)
 	if err != nil {
 		return BlobDetails{}, err
+	}
+
+	if s.uploadPastLifetime(state) {
+		return BlobDetails{}, domain.NewNotFoundError("upload", uploadID)
 	}
 
 	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPush, Repository: state.Repository.String()}); err != nil {
@@ -806,6 +878,14 @@ func (s *Service) authorize(ctx context.Context, action ports.Action) error {
 
 func (s *Service) tenant(ctx context.Context) string {
 	return s.tenants.Resolve(ctx)
+}
+
+// uploadPastLifetime reports whether an upload session is older than the
+// absolute lifetime, measured from its creation. Appending never extends it;
+// such a session is refused like an expired (reaped) one and reaped whatever
+// its activity.
+func (s *Service) uploadPastLifetime(state domain.UploadState) bool {
+	return s.uploadMaxLifetime > 0 && state.StartedAt.Before(s.now().Add(-s.uploadMaxLifetime))
 }
 
 func (s *Service) ensureUpload(ctx context.Context, repositoryName string, uploadID string) (domain.UploadState, error) {
