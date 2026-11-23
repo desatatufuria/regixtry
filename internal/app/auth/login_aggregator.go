@@ -31,6 +31,9 @@ const (
 	loginFailurePurgeBatch        = 1_000
 	loginFailureFlushTimeout      = 10 * time.Second
 	loginFailureLogEvery          = time.Minute
+	// loginFailureReadFlushEvery is the shortest gap between two flushes that
+	// reads trigger: a read may show data up to this old.
+	loginFailureReadFlushEvery = 2 * time.Second
 
 	loginFailureMaxFieldBytes = 100
 )
@@ -91,6 +94,9 @@ type LoginFailureAggregator struct {
 
 	flushMu sync.Mutex
 	lastLog time.Time
+
+	readFlushMu   sync.Mutex
+	lastReadFlush time.Time
 }
 
 // NewLoginFailureAggregator builds an aggregator that flushes to store.
@@ -190,7 +196,33 @@ func (a *LoginFailureAggregator) Stats() LoginFailureStats {
 // flush) to the store, then purges rows past the retention. On a failure the
 // records not yet written stay pending, bounded by MaxPending. Concurrent
 // flushes are serialized; recording is never held up by one.
+//
+// Delivery is at-least-once: when the store errors while committing, the
+// transaction may in fact have committed, and the retry then adds that chunk
+// again. Counts are best effort: they may OVER-count by at most one in-flight
+// chunk after a database error during commit, and never under-count except
+// for the records dropped from a full retry buffer (counted by Stats). Only
+// chunks whose call returned an error are ever re-sent. Exactly-once would
+// need a dedupe key and is out of scope.
 func (a *LoginFailureAggregator) Flush(ctx context.Context) error {
+	return a.flush(ctx, true)
+}
+
+// FlushForRead is the flush a read triggers so its answer is fresh. It is
+// coalesced: at most one runs per 2 seconds, concurrent readers share it, and
+// it never runs the retention purge (only the timer flush does). A read may
+// therefore miss the failures of the last 2 seconds.
+func (a *LoginFailureAggregator) FlushForRead(ctx context.Context) error {
+	a.readFlushMu.Lock()
+	defer a.readFlushMu.Unlock()
+	if now := a.now(); !a.lastReadFlush.IsZero() && now.Sub(a.lastReadFlush) < loginFailureReadFlushEvery {
+		return nil
+	}
+	a.lastReadFlush = a.now()
+	return a.flush(ctx, false)
+}
+
+func (a *LoginFailureAggregator) flush(ctx context.Context, purge bool) error {
 	a.flushMu.Lock()
 	defer a.flushMu.Unlock()
 
@@ -207,6 +239,9 @@ func (a *LoginFailureAggregator) Flush(ctx context.Context) error {
 		}
 	}
 
+	if !purge {
+		return nil
+	}
 	if _, err := a.store.PurgeLoginFailures(ctx, a.now().Add(-LoginFailureRetention), loginFailurePurgeBatch); err != nil {
 		a.logFlushFailure(err, 0)
 	}

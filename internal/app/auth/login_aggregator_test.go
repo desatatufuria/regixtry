@@ -382,3 +382,86 @@ func TestAggregatorSustains100kFailuresPerSecond(t *testing.T) {
 		t.Fatalf("200k adds took %v, want well under 100k/s budget", elapsed)
 	}
 }
+
+func TestReadTriggeredFlushIsCoalescedAndNeverPurges(t *testing.T) {
+	t.Parallel()
+	store := &fakeFailureStore{}
+	now := aggBase
+	agg := NewLoginFailureAggregator(store, LoginFailureOptions{Now: func() time.Time { return now }})
+	for i := 0; i < 300; i++ {
+		agg.RecordLoginFailure(obs(now, fmt.Sprintf("user%d", i%3)))
+		if err := agg.FlushForRead(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(10 * time.Millisecond) // 300 pairs span 3 seconds
+	}
+	store.mu.Lock()
+	calls, purges := store.calls, len(store.purges)
+	store.mu.Unlock()
+	if calls > 2 {
+		t.Fatalf("store calls = %d for 300 failure+read pairs over 3 s, want at most 2 (one per 2 s window)", calls)
+	}
+	if purges != 0 {
+		t.Fatalf("purges = %d, want none from read-triggered flushes", purges)
+	}
+	if store.total() == 0 {
+		t.Fatal("the data of the flush must be visible")
+	}
+	// Counts stay exact: what the reads did not flush the timer flush writes.
+	if err := agg.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.total() != 300 || len(store.purges) != 1 {
+		t.Fatalf("total = %d purges = %d, want 300 and 1 (the timer flush purges)", store.total(), len(store.purges))
+	}
+}
+
+func TestConcurrentReadersShareOneFlush(t *testing.T) {
+	t.Parallel()
+	store := &fakeFailureStore{}
+	agg := NewLoginFailureAggregator(store, LoginFailureOptions{})
+	agg.RecordLoginFailure(obs(aggBase, "alice"))
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = agg.FlushForRead(context.Background()) }()
+	}
+	wg.Wait()
+	if store.calls != 1 || store.total() != 1 {
+		t.Fatalf("calls = %d total = %d, want one shared flush", store.calls, store.total())
+	}
+}
+
+func TestRetryNeverResendsAcknowledgedChunks(t *testing.T) {
+	t.Parallel()
+	store := &fakeFailureStore{failFrom: 3}
+	agg := NewLoginFailureAggregator(store, LoginFailureOptions{FlushChunk: 2})
+	for i := 0; i < 6; i++ {
+		agg.RecordLoginFailure(obs(aggBase, fmt.Sprintf("user%d", i)))
+	}
+	if err := agg.Flush(context.Background()); err == nil {
+		t.Fatal("want the failure on the third chunk")
+	}
+	acknowledged := map[string]int{}
+	for _, r := range store.added {
+		acknowledged[r.Account]++
+	}
+	if len(acknowledged) != 4 {
+		t.Fatalf("acknowledged = %v, want 4 accounts", acknowledged)
+	}
+	store.mu.Lock()
+	store.failFrom = 0
+	store.added = nil
+	store.mu.Unlock()
+	if err := agg.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.added) != 2 {
+		t.Fatalf("resent %d records, want only the 2 of the failed chunk", len(store.added))
+	}
+	for _, r := range store.added {
+		if acknowledged[r.Account] > 0 {
+			t.Fatalf("%s was acknowledged before and re-sent", r.Account)
+		}
+	}
+}
