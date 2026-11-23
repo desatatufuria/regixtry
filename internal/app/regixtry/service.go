@@ -440,7 +440,8 @@ func (s *Service) ReapAbandonedUploads(ctx context.Context) (int, error) {
 	}
 
 	tenant := s.tenant(ctx)
-	cutoff := s.now().Add(-s.uploadTTL)
+	now := s.now()
+	cutoff := now.Add(-s.uploadTTL)
 	uploads, err := s.metadata.ListUploads(ctx, tenant, nil)
 	if err != nil {
 		return 0, err
@@ -449,12 +450,20 @@ func (s *Service) ReapAbandonedUploads(ctx context.Context) (int, error) {
 	reaper, _ := s.blobs.(UploadReaper)
 	reaped := 0
 	for _, upload := range uploads {
-		if !upload.UpdatedAt.Before(cutoff) {
+		// A session past its absolute lifetime goes whatever its activity (an
+		// append refreshes the idle timestamp, not the creation time); the
+		// reaper still skips one with a write or commit in flight.
+		reapBefore := cutoff
+		if s.uploadPastLifetime(upload) {
+			// The data file's mtime comes from the OS clock; a minute of
+			// tolerance keeps recent activity from shielding the session.
+			reapBefore = now.Add(time.Minute)
+		} else if !upload.UpdatedAt.Before(cutoff) {
 			continue
 		}
 
 		if reaper != nil {
-			removed, err := reaper.ReapUpload(ctx, upload.ID, cutoff)
+			removed, err := reaper.ReapUpload(ctx, upload.ID, reapBefore)
 			if err != nil {
 				return reaped, err
 			}
@@ -513,6 +522,10 @@ func (s *Service) AppendUpload(ctx context.Context, repositoryName string, uploa
 		return UploadDetails{}, err
 	}
 
+	if s.uploadPastLifetime(state) {
+		return UploadDetails{}, domain.NewNotFoundError("upload", uploadID)
+	}
+
 	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPush, Repository: state.Repository.String()}); err != nil {
 		return UploadDetails{}, err
 	}
@@ -533,6 +546,10 @@ func (s *Service) CompleteUpload(ctx context.Context, repositoryName string, upl
 	state, err := s.ensureUpload(ctx, repositoryName, uploadID)
 	if err != nil {
 		return BlobDetails{}, err
+	}
+
+	if s.uploadPastLifetime(state) {
+		return BlobDetails{}, domain.NewNotFoundError("upload", uploadID)
 	}
 
 	if err := s.authorize(ctx, ports.Action{Verb: ports.ActionPush, Repository: state.Repository.String()}); err != nil {
@@ -859,6 +876,14 @@ func (s *Service) authorize(ctx context.Context, action ports.Action) error {
 
 func (s *Service) tenant(ctx context.Context) string {
 	return s.tenants.Resolve(ctx)
+}
+
+// uploadPastLifetime reports whether an upload session is older than the
+// absolute lifetime, measured from its creation. Appending never extends it;
+// such a session is refused like an expired (reaped) one and reaped whatever
+// its activity.
+func (s *Service) uploadPastLifetime(state domain.UploadState) bool {
+	return s.uploadMaxLifetime > 0 && state.StartedAt.Before(s.now().Add(-s.uploadMaxLifetime))
 }
 
 func (s *Service) ensureUpload(ctx context.Context, repositoryName string, uploadID string) (domain.UploadState, error) {
