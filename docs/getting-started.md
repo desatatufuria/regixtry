@@ -6,11 +6,10 @@
 go run ./cmd/regixtry serve \
   -addr 127.0.0.1:5000 \
   -public-url http://127.0.0.1:5000 \
-  -storage-root ./data \
-  -require-project=false
+  -storage-root ./data
 ```
 
-Pushes require an existing project by default, and the admin API that creates projects exists only when auth is configured, so a run without auth needs `-require-project=false`. With auth, create the project first (see [operations.md](operations.md#upgrade-to-the-projects-release)). `serve` creates `./data/content` for blobs and `./data/metadata.db` for metadata when `-db` is not given.
+Project enforcement is off in this anonymous mode (it is on by default only when auth is enabled; see [operations.md](operations.md#upgrade-to-the-projects-release)), so any repository name works. With auth, create the project first. `serve` creates `./data/content` for blobs and `./data/metadata.db` for metadata when `-db` is not given.
 
 ## Push and pull
 

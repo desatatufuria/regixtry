@@ -4,9 +4,9 @@ Draft. Single source for an operator upgrading to the release that adds projects
 
 ## Read first
 
-- **Project enforcement is on by default.** A push to a project that does not exist is refused (`404 NAME_UNKNOWN`), and a new repository without a slash is refused (`400 NAME_INVALID`). Existing repositories keep working.
+- **Project enforcement is on by default when auth is enabled (`-auth-postgres-dsn`) and off when anonymous.** A push to a project that does not exist is refused (`404 NAME_UNKNOWN`), and a new repository without a slash is refused (`400 NAME_INVALID`). Existing repositories keep working.
 - **The scan-history purge is irreversible.** The first start permanently deletes duplicate scan history (about 12 s per 200k scan runs). Back up `metadata.db` first.
-- **A deployment without auth cannot create projects** (the admin API is only mounted with `-auth-postgres-dsn`). Run it with `-require-project=false`.
+- **Anonymous deployments are not affected.** Projects are created through the admin API, which is only mounted with `-auth-postgres-dsn`, so without it enforcement stays off. An explicit `-require-project=true` without a DSN refuses to start.
 
 ## What is new
 
@@ -17,11 +17,11 @@ Draft. Single source for an operator upgrading to the release that adds projects
 - Project roles are matched on the whole first segment, per request. Token scopes stay exact repositories; a project grant is expanded when the token is issued.
 - Access events for project grants and project create and delete.
 - TUI: `Admin > Access > Projects`, project members, inherited access on Edit user, project scope for new robots, and a folder tree in the Console.
-- `serve` logs `project enforcement: on` or `off` at start.
+- `serve` logs the effective enforcement mode and why at start.
 
 ## Behavior changes
 
-- `-require-project` / `REGISTRY_REQUIRE_PROJECT` now default to `true`. Opt out with `-require-project=false` or `REGISTRY_REQUIRE_PROJECT=false`; pushes then behave as before.
+- `-require-project` / `REGISTRY_REQUIRE_PROJECT` default to on when auth is enabled and off otherwise; an explicit value (flag over env) always wins. Opt out with `-require-project=false` or `REGISTRY_REQUIRE_PROJECT=false`; pushes then behave as before.
 - New flat repository names are refused while enforcement is on. A flat repository whose first push failed midway cannot be retried.
 - Writes to SQLite wait in the write queue instead of returning `SQLITE_BUSY` to the push path.
 - Cancelling or reaping an upload no longer waits for a client that stopped sending its body.

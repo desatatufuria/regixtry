@@ -314,8 +314,11 @@ type serveConfig struct {
 	// blob files.
 	GCDeleteEnabled bool
 	// RequireProject refuses pushes to a project that does not exist and new
-	// repositories without a project (REGISTRY_REQUIRE_PROJECT, default true).
+	// repositories without a project (REGISTRY_REQUIRE_PROJECT; default on only with an auth DSN).
 	RequireProject bool
+	// RequireProjectExplicit records that a flag or env value chose
+	// RequireProject (as opposed to the effective default).
+	RequireProjectExplicit bool
 	// Upload and manifest size/concurrency limits. For each, zero means "use
 	// the built-in default" and a negative value disables the limit.
 	MaxManifestBytes      int64
@@ -444,7 +447,7 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	flags.IntVar(&cfg.TrivyMaxConcurrency, "trivy-max-concurrency", 0, "maximum concurrent trivy runs")
 	flags.BoolVar(&cfg.DeleteEnabled, "delete-enabled", parseBoolEnv("REGISTRY_DELETE_ENABLED", false), "enable DELETE /v2/<name>/manifests/<reference> (manifest and tag deletion)")
 	flags.BoolVar(&cfg.GCDeleteEnabled, "gc-delete-enabled", parseBoolEnv("REGISTRY_GC_DELETE_ENABLED", false), "enable POST /admin/v1/gc/reports/{id}/delete (irreversibly unlinks unreferenced blob files; distinct from -delete-enabled, which is metadata-only)")
-	flags.BoolVar(&cfg.RequireProject, "require-project", parseBoolEnv("REGISTRY_REQUIRE_PROJECT", true), "refuse pushes to a project that does not exist (404 NAME_UNKNOWN) and new repositories without a project; existing flat repositories keep working (default true; pass -require-project=false to disable)")
+	flags.BoolVar(&cfg.RequireProject, "require-project", false, "refuse pushes to a project that does not exist (404 NAME_UNKNOWN) and new repositories without a project; existing flat repositories keep working. Default: on when -auth-postgres-dsn is configured (the admin API creates projects), off otherwise; an explicit true without a DSN is a startup error; env REGISTRY_REQUIRE_PROJECT, flag wins")
 	flags.StringVar(&cfg.TrustedProxies, "trusted-proxies", os.Getenv("REGISTRY_TRUSTED_PROXIES"), "comma-separated CIDRs/IPs of reverse proxies whose X-Forwarded-For is trusted for client IP logging (empty = ignore X-Forwarded-For)")
 	var limitEnvErr error
 	trackEnv := func(err error) {
@@ -483,6 +486,10 @@ func parseServeConfig(args []string) (serveConfig, error) {
 	}
 
 	if err := flags.Parse(args); err != nil {
+		return serveConfig{}, err
+	}
+
+	if err := resolveRequireProject(flags, &cfg); err != nil {
 		return serveConfig{}, err
 	}
 
@@ -2462,7 +2469,7 @@ func serve(ctx context.Context, listener net.Listener, cfg serveConfig, stdout i
 	}()
 
 	if stdout != nil {
-		fmt.Fprintln(stdout, projectEnforcementLogLine(cfg.RequireProject))
+		fmt.Fprintln(stdout, projectEnforcementLogLine(cfg.RequireProject, cfg.RequireProjectExplicit))
 		fmt.Fprintf(stdout, "regixtry serving on %s\n", listener.Addr().String())
 	}
 
@@ -2486,13 +2493,50 @@ func serve(ctx context.Context, listener net.Listener, cfg serveConfig, stdout i
 	}
 }
 
-// projectEnforcementLogLine states the effective -require-project mode at
-// serve start so an operator sees which push contract is active.
-func projectEnforcementLogLine(require bool) string {
-	if require {
-		return "project enforcement: on (pushes need an existing project; create projects with the admin API or the TUI; -require-project=false disables)"
+// resolveRequireProject applies flag > env > effective default. The default
+// is on only when the admin API exists (an auth DSN is configured), because
+// without it no project can be created. An explicit true without a DSN is an
+// error rather than a registry nobody can push to.
+func resolveRequireProject(flags *flag.FlagSet, cfg *serveConfig) error {
+	explicit := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "require-project" {
+			explicit = true
+		}
+	})
+	if !explicit {
+		if value := strings.TrimSpace(os.Getenv("REGISTRY_REQUIRE_PROJECT")); value != "" {
+			if parsed, err := strconv.ParseBool(value); err == nil {
+				cfg.RequireProject, explicit = parsed, true
+			}
+		}
 	}
-	return "project enforcement: off (-require-project=false)"
+	hasDSN := strings.TrimSpace(cfg.AuthPostgresDSN) != ""
+	if !explicit {
+		cfg.RequireProject = hasDSN
+	}
+	cfg.RequireProjectExplicit = explicit
+	if cfg.RequireProject && !hasDSN {
+		return errors.New("project enforcement needs the admin API: configure -auth-postgres-dsn or set -require-project=false")
+	}
+	return nil
+}
+
+// projectEnforcementLogLine states the effective -require-project mode and
+// why, at serve start, so an operator sees which push contract is active.
+func projectEnforcementLogLine(require bool, explicit bool) string {
+	mode := "off"
+	if require {
+		mode = "on"
+	}
+	switch {
+	case explicit:
+		return "project enforcement: " + mode + " (explicit)"
+	case require:
+		return "project enforcement: on (default: admin API available)"
+	default:
+		return "project enforcement: off (default: no admin API, create-project is unavailable without -auth-postgres-dsn)"
+	}
 }
 
 func newHTTPServer(cfg serveConfig, handler stdhttp.Handler) *stdhttp.Server {

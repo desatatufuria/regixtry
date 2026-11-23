@@ -275,7 +275,7 @@ Scan results are latest-only: a digest keeps one completed result per repository
 
 `_catalog` and `tags/list` accept `n` and `last`. Without `n`, no limit is applied; a negative or non-numeric `n` is `400`. Registry errors follow `{ "errors": [{"code":"...","message":"..."}] }`.
 
-Project enforcement (`-require-project`, on by default; see [configuration.md](configuration.md)): a push is refused unless its project exists. The check runs after authorization, so a caller without push permission gets the same `401` or `403` whether or not the project exists, and it applies when an upload starts, when an upload is completed and when a manifest is published. Reads (pull, tags, catalog, referrers) never consult projects.
+Project enforcement (`-require-project`, on by default when auth is enabled; see [configuration.md](configuration.md)): a push is refused unless its project exists. The check runs after authorization, so a caller without push permission gets the same `401` or `403` whether or not the project exists, and it applies when an upload starts, when an upload is completed and when a manifest is published. Reads (pull, tags, catalog, referrers) never consult projects.
 
 | Case | Status | Body |
 | --- | --- | --- |
@@ -283,7 +283,7 @@ Project enforcement (`-require-project`, on by default; see [configuration.md](c
 | First push of a new flat name such as `flat` | `400` | `{"errors":[{"code":"NAME_INVALID","message":"repository \"flat\" has no project; use <project>/flat (flat repository names are no longer created)"}]}` |
 | Push to an existing flat repository | as before | existing flat repositories keep working |
 
-With `-require-project=false` none of these refusals exists and pushes behave as before projects were introduced. Without `-auth-postgres-dsn` the `/admin/v1` routes are not registered (`404`), so a deployment without auth cannot create projects: run it with `-require-project=false`.
+With `-require-project=false` none of these refusals exists and pushes behave as before projects were introduced. Without `-auth-postgres-dsn` the `/admin/v1` routes are not registered (`404`), so a deployment without auth cannot create projects: enforcement defaults to off there, and an explicit `-require-project=true` without a DSN fails at startup.
 
 Both `DELETE` routes are gated by the opt-in `-delete-enabled`/`REGISTRY_DELETE_ENABLED` flag (default `false`). When the flag is off, an otherwise-authorized caller gets `UNSUPPORTED` (`400`), an acknowledged-but-refused shape rather than a bare `405`. Deletion requires the distinct `delete` scope action (`repository:<name>:delete`) and never removes blob files on disk.
 
