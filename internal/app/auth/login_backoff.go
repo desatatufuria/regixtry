@@ -173,7 +173,7 @@ func (b *loginBackoff) remove(element *list.Element) {
 
 // accountHash is the short, log-safe identifier of a normalized username that
 // is not known to exist.
-func accountHash(normalized string) string {
+var accountHash = func(normalized string) string {
 	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:4])
 }
