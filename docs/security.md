@@ -102,6 +102,15 @@ Local TUI inspection is not, and was never designed to be, a third enforcement b
 
 These are recommendations, not guarantees enforced by the program.
 
+## Open-upload fairness
+
+The global open-upload cap (`-max-open-uploads`, default 1000) is shared by every pusher, so it alone would let one writer starve the rest. Two bounds close that:
+
+- **Per identity:** one authenticated identity (user or robot id, not the token, so extra tokens do not add quota) holds at most 100 open uploads. The check and the insert of the upload row are one SQL statement through the write queue, so parallel `POST .../blobs/uploads/` calls cannot overshoot either cap. The refusal is `429` `TOOMANYREQUESTS`, the same shape as the global and per-repository refusals. In anonymous mode all callers share one bucket, so a single anonymous client can still use up to 100 slots and the rest of the global cap stays available to authenticated identities.
+- **Absolute lifetime:** an upload session expires 72 h after creation. Appending refreshes the idle timestamp (`-upload-ttl`) but never the creation time, so a writer can no longer keep slots alive indefinitely by appending a byte periodically. After 72 h append and complete are refused like an expired upload and the reaper deletes the session even if it was just written to (a write in flight is skipped until it ends). Cancel still works.
+
+Neither value is configurable. The owner is stored in an additive `uploads.owner` column; an older binary ignores it.
+
 ## Failed logins and rate limiting
 
 Every rejected credential (`/auth/token`, and bearer tokens on `/v2` and `/admin/v1`) writes one log line `login failed endpoint=<path> ip=<client> reason="<real reason>" account=<name>` and increments an in-process counter by reason. An unknown username is logged as `account_hash=<8 hex>`, never raw, to avoid log injection and unbounded cardinality; passwords and tokens are never logged. The client IP is the TCP peer unless `-trusted-proxies` names the proxies whose `X-Forwarded-For` to trust (see [operations.md](operations.md#reverse-proxy-and-client-ip)). Password checks are bcrypt (cost 10, about 85 ms): their concurrency is capped at `max(2, NumCPU/2)` (`-login-max-concurrency`) so a flood of bad passwords cannot starve `/v2`; excess logins wait at most 250 ms and then get `429` with `Retry-After: 1`. A valid credential token (64 hex) skips bcrypt, so CI robots keep working during a flood. A `-trusted-proxies` range of `/0` is refused at startup because it would trust every peer's `X-Forwarded-For`. There is no IP-based blocking in the registry: keep per-IP volume limits in the reverse proxy. What is kept about failures, and for how long, is in [Login failures: what is recorded and why](#login-failures-what-is-recorded-and-why).
