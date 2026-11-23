@@ -58,6 +58,12 @@ Documented limits:
 - `members` is not a reserved project name: a project may be called `members`; its routes are `/admin/v1/projects/members/members`, which cannot collide with anything.
 - The local TUI Console (including its Projects view) is not access controlled, see below; it is a derived view of the catalog, not the project store.
 
+## Push-triggered scans: admission fairness
+
+Push-triggered scans are admitted against a service-wide cap (64), a per-repository cap (8) and a per-identity cap (8, one eighth of the global cap). The last quarter of the global pool is reserved for identities with no scan in flight, so an authenticated writer, or a few of them, cannot take every slot and stop other writers' pushes from being scanned. Limit: an attacker with many writer identities can still hold one slot each in that reserve.
+
+A refused push is not dropped: it is queued in a bounded in-memory retry list and scanned as soon as a slot frees, even with the scheduled sweep disabled. The list does not survive a restart. The pull gate is unchanged: it enforces only the latest completed result against the configured severity threshold, and a digest with no completed result (not yet scanned, or still waiting in the retry list) is allowed, the same as any digest not scanned yet. There is no "require a scan" mode, so until the deferred scan completes such a digest is pullable.
+
 ## Robot accounts
 
 Robot accounts (`User.IsRobot`) are CI/CD machine identities with a narrower attack surface than human accounts by design:
