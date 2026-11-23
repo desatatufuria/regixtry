@@ -10,6 +10,9 @@ import tea "charm.land/bubbletea/v2"
 func (s consoleRepositoriesScreen) mouseBlocked() bool { return s.confirm.Active() }
 
 func (s consoleRepositoriesScreen) Mouse(env screenEnv, msg tea.MouseMsg) (adminScreen, tea.Cmd) {
+	if s.filtered {
+		return s.treeMouse(env, msg)
+	}
 	total := len(s.visible())
 	rows := consoleMouseRows(env.Layout.Width, env.Layout.Height, s.selected, total)
 	return listMouse(s, env, msg, mouseList{Rows: rows, Selected: boundedIndex(s.selected, total), Open: true})

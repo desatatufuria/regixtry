@@ -1,0 +1,24 @@
+  Console › Projects › odabank                                                                                                                        
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+    odabank                                ╭──────────────────────────────────────────────────────────────╮                5 repositories, 15 tags
+                                           │  Delete repository odabank/ledger                            │
+    ╭────────────────────────────────────  │                                                              │  ────────────────────────────────────╮
+    │   NAME                               │  The repository is removed with 1 tag and every manifest,    │      REPOS    TAGS  LAST PUSH        │
+    │ ───────────────────────────────────  │  in one transaction.                                         │  ─────────────────────────────────── │
+    │ ▸   ● ledger                         │                                                              │          1       1  2026-11-21 08:41 │
+    │   ▸ ● payments                       │  ╭────────────────────────────────────────────────────────╮  │          3       9  2026-11-20 08:41 │
+    │   ▸   zeta/                          │  │ odabank/ledger                                         │  │          1       5  2026-11-17 08:41 │
+    │                                      │  │ 1 tag, last pushed 2026-11-21 08:41                    │  │                                      │
+    │                                      │  ╰────────────────────────────────────────────────────────╯  │                                      │
+    │                                      │                                                              │                                      │
+    │                                      │  Pulls by tag and by digest stop working at once. Blob       │                                      │
+    │                                      │  files stay until garbage collection. This cannot be         │                                      │
+    │                                      │  undone.                                                     │                                      │
+    │                                      │                                                              │                                      │
+    │                                      │   Delete                                         y / enter   │                                      │
+    ╰────────────────────────────────────  │   Cancel                                               esc   │  ────────────────────────────────────╯
+                                           ╰──────────────────────────────────────────────────────────────╯
+    ● repository  ▸ collapsed folder  ▾ expanded folder. A row with both is a repository that also has children.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ↑↓ move   →/l expand   ←/h collapse   enter open tags   f into folder   bksp/esc up   q quit                                           F2 mouse on  
