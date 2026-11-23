@@ -370,7 +370,10 @@ func TestQueuePushScanSkipsRepositoryWithDisablingOverride(t *testing.T) {
 // Repository Alerts with a permanent failed row for something that can
 // never succeed. A subject-referencing manifest must never queue a
 // push-triggered scan at all, for its own digest -- the manifest it refers
-// to (the real image) is unaffected and keeps getting scanned normally.
+// to (the real image) is unaffected and keeps getting scanned normally. The
+// fixture is a genuine referrer (Sigstore bundle artifactType, empty config,
+// bundle layer): a subject on an image-shaped manifest does not qualify, see
+// TestPublishManifestScansImageShapedManifestDespiteSubjectOrSignatureTag.
 func TestPublishManifestSkipsPushTriggeredScanForSubjectReferencingManifest(t *testing.T) {
 	t.Parallel()
 
@@ -407,7 +410,7 @@ func TestPublishManifestSkipsPushTriggeredScanForSubjectReferencingManifest(t *t
 	// subject-referencing manifests.
 	waitForRunnerTargets(t, trivyRunner, 1)
 
-	signaturePayload := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":%d},"config":{"mediaType":"application/vnd.oci.image.config.v1+json","digest":%q,"size":9},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar","digest":%q,"size":9}]}`, image.Digest, image.Size, blob.Digest, blob.Digest))
+	signaturePayload := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","artifactType":"application/vnd.dev.sigstore.bundle.v0.3+json","subject":{"mediaType":"application/vnd.oci.image.manifest.v1+json","digest":%q,"size":%d},"config":{"mediaType":"application/vnd.oci.empty.v1+json","digest":%q,"size":9},"layers":[{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","digest":%q,"size":9}]}`, image.Digest, image.Size, blob.Digest, blob.Digest))
 	signature, err := service.PublishManifest(context.Background(), "library/subject", "sha256-deadbeef", "application/vnd.oci.image.manifest.v1+json", signaturePayload)
 	if err != nil {
 		t.Fatalf("PublishManifest(signature) error = %v", err)
