@@ -123,11 +123,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 ```json
-{"failures":[{"window_start":"2026-03-01T10:05:00Z","endpoint":"/auth/token","reason":"wrong password or unknown admin credential token","account":"alice","ip":"203.0.113.7","count":6,"first_seen":"2026-03-01T10:06:12.5Z","last_seen":"2026-03-01T10:07:40.1Z"}],"next":""}
-{"mode":"enforce","threshold":5,"base_seconds":2,"max_seconds":300,"max_concurrency":4,"trusted_proxies_configured":true,"accounts":[{"account":"alice","failures":6,"remaining_seconds":4}]}
+{"failures":[{"window_start":"2026-03-01T10:05:00Z","endpoint":"/auth/token","reason":"wrong password or unknown admin credential token","account":"alice","ip":"203.0.113.7","count":5,"first_seen":"2026-03-01T10:06:12.5Z","last_seen":"2026-03-01T10:07:40.1Z"}],"next":""}
+{"mode":"enforce","threshold":5,"base_seconds":2,"max_seconds":300,"max_concurrency":4,"trusted_proxies_configured":true,"accounts":[{"account":"alice","failures":5,"remaining_seconds":2}]}
 ```
 
-Failures are aggregated in memory and written every 60 seconds and at shutdown (one row per window, endpoint, reason, account and IP; rows older than 30 days are purged), so a flood cannot grow the table without bound and a database outage never blocks or fails a login. Passing `cursor` back unchanged is required; never build one.
+Failures are aggregated in memory and written every 60 seconds and at shutdown (one row per window, endpoint, reason, account and IP; rows older than 30 days are purged), so a flood cannot grow the table without bound and a database outage never blocks or fails a login. Passing `cursor` back unchanged is required; never build one. The four routes exist only when an auth database is configured (otherwise the admin API is not mounted); another method on a route answers `405` with an `Allow` header, a non-admin principal `403` and a missing or invalid token `401`. Reset an unknown username by its label, for example `{"account":"hash:be463d41"}`; the reply and the access event carry the label, never the raw name. In `enforce` mode the sixth wrong password of an account is refused with `429` (the example above shows the state right after the fifth failure; attempts refused during the backoff are recorded under the account's hash, not its name).
 
 Example: the first page of all repository grants, then the next one (global admin token required):
 
