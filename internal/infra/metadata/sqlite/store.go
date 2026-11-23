@@ -2875,6 +2875,12 @@ func (s *Store) init() error {
 		// Per-digest lookups (latest/active/completed run, replacement, the
 		// history purge) all filter on this triple.
 		`CREATE INDEX IF NOT EXISTS idx_scan_runs_digest ON scan_runs (tenant, repository, digest);`,
+		// Open-upload fairness: who opened an upload, so the per-identity cap
+		// can count it atomically with the insert (SaveUploadAdmitted). Additive
+		// and idempotent; an older binary ignores the column, and rows it wrote
+		// (or that predate this) have owner '' (the anonymous bucket).
+		`ALTER TABLE uploads ADD COLUMN owner TEXT NOT NULL DEFAULT '';`,
+		`CREATE INDEX IF NOT EXISTS idx_uploads_tenant_owner ON uploads (tenant, owner);`,
 	}
 
 	for _, statement := range statements {

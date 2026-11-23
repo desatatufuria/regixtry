@@ -84,6 +84,12 @@ type Service struct {
 	maxOpenUploads        int
 	maxOpenUploadsPerRepo int
 	uploadTTL             time.Duration
+	// maxOpenUploadsPerIdentity caps open uploads per authenticated identity
+	// and uploadMaxLifetime is the absolute session age after which an upload
+	// is refused and reaped whatever its activity (zero or negative disables
+	// either). See service_options.go.
+	maxOpenUploadsPerIdentity int
+	uploadMaxLifetime         time.Duration
 	// skipSweepDBRefresh turns the once-per-sweep vulnerability DB download
 	// off (air-gapped installs); the zero value keeps the refresh on. See
 	// SetScanDBRefreshOnSweep.
@@ -155,6 +161,9 @@ func NewService(blobStore ports.BlobStore, metadataStore ports.MetadataStore, ac
 		maxOpenUploads:        DefaultMaxOpenUploads,
 		maxOpenUploadsPerRepo: DefaultMaxOpenUploadsPerRepo,
 		uploadTTL:             DefaultUploadTTL,
+
+		maxOpenUploadsPerIdentity: DefaultMaxOpenUploadsPerIdentity,
+		uploadMaxLifetime:         DefaultUploadMaxLifetime,
 	}
 }
 
@@ -277,12 +286,57 @@ func (s *Service) BeginUpload(ctx context.Context, repositoryName string) (Uploa
 		return UploadDetails{}, err
 	}
 
-	if err := s.metadata.SaveUpload(ctx, s.tenant(ctx), state); err != nil {
+	if err := s.saveNewUpload(ctx, state); err != nil {
 		_ = s.blobs.CancelUpload(ctx, state.ID)
 		return UploadDetails{}, err
 	}
 
 	return newUploadDetails(state), nil
+}
+
+// uploadAdmitter is the optional MetadataStore capability that inserts a new
+// upload row atomically with the global and per-identity cap checks. A store
+// without it falls back to SaveUpload (the caps checked under beginUploadMu).
+type uploadAdmitter interface {
+	SaveUploadAdmitted(ctx context.Context, tenant string, state domain.UploadState, owner string, maxOpen int, maxPerOwner int) (string, error)
+}
+
+// uploadOwner is the identity open uploads are counted against: the
+// authenticated user (or robot) id, so every token of one user shares one
+// quota. Without a principal (anonymous mode) it is "", a single bucket.
+func uploadOwner(ctx context.Context) string {
+	principal := ports.PrincipalFromContext(ctx)
+	if principal == nil {
+		return ""
+	}
+	for _, id := range []string{principal.UserID, principal.Username, principal.Subject} {
+		if id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+// saveNewUpload persists the row of a new upload, enforcing the global and
+// per-identity caps in the same write. Callers hold beginUploadMu.
+func (s *Service) saveNewUpload(ctx context.Context, state domain.UploadState) error {
+	admitter, ok := s.metadata.(uploadAdmitter)
+	if !ok {
+		return s.metadata.SaveUpload(ctx, s.tenant(ctx), state)
+	}
+
+	denied, err := admitter.SaveUploadAdmitted(ctx, s.tenant(ctx), state, uploadOwner(ctx), s.maxOpenUploads, s.maxOpenUploadsPerIdentity)
+	if err != nil {
+		return err
+	}
+	switch denied {
+	case "":
+		return nil
+	case "global":
+		return domain.NewTooManyRequestsError(fmt.Sprintf("too many open uploads (limit %d); finish or cancel some and retry", s.maxOpenUploads))
+	default:
+		return domain.NewTooManyRequestsError(fmt.Sprintf("too many open uploads for this identity (limit %d); finish or cancel some and retry", s.maxOpenUploadsPerIdentity))
+	}
 }
 
 // checkOpenUploadCaps refuses a new upload once the global or per-repository
