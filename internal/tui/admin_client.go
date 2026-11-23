@@ -126,6 +126,14 @@ type AdminClient interface {
 	// ListUserProjectGrants returns the project roles of one user, by project
 	// (global administrator only).
 	ListUserProjectGrants(ctx context.Context, session AdminSession, userID string) ([]ports.AdminProjectGrant, error)
+	// ListLoginFailures, GetLoginSummary and GetLoginBackoff are the read-only
+	// login security views of the Overview and the Login security screen;
+	// ResetLoginBackoff is their one write (clears the failure counter of one
+	// account and nothing else). All four are global administrator only.
+	ListLoginFailures(ctx context.Context, session AdminSession, query AdminLoginFailuresQuery) (ports.AdminLoginFailurePage, error)
+	GetLoginSummary(ctx context.Context, session AdminSession) (ports.AdminLoginSummary, error)
+	GetLoginBackoff(ctx context.Context, session AdminSession) (ports.AdminLoginBackoff, error)
+	ResetLoginBackoff(ctx context.Context, session AdminSession, account string) (string, error)
 }
 
 type HTTPAdminClient struct {
