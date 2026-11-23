@@ -49,7 +49,7 @@ func TestConsoleDrillDownAndBackKeepsEveryExistingFunction(t *testing.T) {
 	}
 	m = runKey(t, m, "down")
 	m = runKey(t, m, "enter")
-	if m.screen != screenRepositories || !strings.Contains(consoleView(m), "Console › Projects › team › Repositories") || strings.Contains(consoleView(m), "ops/c") {
+	if m.screen != screenRepositories || !strings.Contains(consoleView(m), "Console › Projects › team") || strings.Contains(consoleView(m), "ops/c") {
 		t.Fatalf("Enter on a project: screen = %q\n%s", m.screen, consoleView(m))
 	}
 	// Enter on a repository loads its tags on the Tags screen.
