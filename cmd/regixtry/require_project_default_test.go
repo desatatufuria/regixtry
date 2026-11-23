@@ -165,3 +165,29 @@ func TestAnonymousDefaultKeepsThePreviousPushBehaviorAndEnforcementRefuses(t *te
 		t.Fatalf("enforced: new flat name status = %d, want 400 NAME_INVALID", got)
 	}
 }
+
+func TestSetupAuthGuidanceEndsWithTheCreateProjectStep(t *testing.T) {
+	cfg := setupConfig{PublicURL: "http://127.0.0.1:5000/"}
+	for name, outcome := range map[string]setupAuthBootstrapOutcome{
+		"created":  {Enabled: true, Created: true, Username: "admin"},
+		"existing": {Enabled: true, RequiresExistingAuth: true, Username: "admin"},
+		"already":  {Enabled: true, Username: "admin"},
+	} {
+		var out bytes.Buffer
+		printSetupAuthGuidance(&out, cfg, outcome)
+		for _, want := range []string{
+			"docker login 127.0.0.1:5000",
+			"Then create the first project",
+			"'http://127.0.0.1:5000/auth/token?service=regixtry'",
+			"http://127.0.0.1:5000/admin/v1/projects",
+			"Admin > Access > Projects",
+		} {
+			if !strings.Contains(out.String(), want) {
+				t.Fatalf("%s: guidance = %q, want %q", name, out.String(), want)
+			}
+		}
+		if strings.Index(out.String(), "docker login") > strings.Index(out.String(), "Then create the first project") {
+			t.Fatalf("%s: the project step must come after the login step", name)
+		}
+	}
+}

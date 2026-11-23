@@ -44,3 +44,13 @@ printf '%s\n' '<admin-password>' | docker login localhost:${REGISTRY_PORT:-5517}
 ```
 
 Compose publishes the registry on `127.0.0.1:${REGISTRY_PORT:-5517}` and PostgreSQL on `15432`.
+
+Auth is enabled here, so project enforcement is on: create the project before the first push (the first path segment of the image name). The admin API needs an unrestricted token, not the one `docker login` obtains:
+
+```bash
+TOKEN=$(curl -s -u admin:<admin-password> "http://localhost:${REGISTRY_PORT:-5517}/auth/token?service=regixtry" | jq -r .token)
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"name":"example"}' "http://localhost:${REGISTRY_PORT:-5517}/admin/v1/projects"
+docker push localhost:${REGISTRY_PORT:-5517}/example/my-image:latest
+```
+
+Or in the TUI: `Admin > Access > Projects`, then `n`. To run without enforcement set `REGIXTRY_REQUIRE_PROJECT=false` in `.env` (see [operations.md](operations.md#upgrade-to-the-projects-release)).

@@ -1544,6 +1544,7 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 				}
 			}
 			_, _ = fmt.Fprintln(stdout, "TUI access: docker exec -it <container> regixtry tui -storage-root /var/lib/regixtry")
+			printCreateProjectHint(stdout, proj.PublicURL)
 		}
 		return nil
 	default:
@@ -2996,9 +2997,24 @@ func printSetupAuthGuidance(stdout io.Writer, cfg setupConfig, outcome setupAuth
 		_, _ = fmt.Fprintf(stdout, "Next: printf '%%s\\n' '<admin-password>' | docker login %s -u %s --password-stdin\n", registryHost, shellQuote(outcome.Username))
 	}
 
+	printCreateProjectHint(stdout, cfg.PublicURL)
+
 	if strings.HasPrefix(strings.TrimSpace(cfg.PublicURL), "http://") {
 		_, _ = fmt.Fprintln(stdout, "Docker may require this registry to be configured as insecure before login, push, or pull over HTTP.")
 	}
+}
+
+// printCreateProjectHint tells the operator of an auth-enabled install (which
+// enforces projects by default) to create the first project before pushing.
+func printCreateProjectHint(stdout io.Writer, publicURL string) {
+	base := strings.TrimRight(strings.TrimSpace(publicURL), "/")
+	if stdout == nil || base == "" {
+		return
+	}
+	_, _ = fmt.Fprintln(stdout, "Then create the first project: pushes need an existing project (the first path segment of the image name, for example <project>/<image>).")
+	_, _ = fmt.Fprintf(stdout, "  TOKEN=$(curl -s -u <admin-user>:<admin-password> '%s/auth/token?service=regixtry' | jq -r .token)\n", base)
+	_, _ = fmt.Fprintf(stdout, "  curl -X POST -H \"Authorization: Bearer $TOKEN\" -d '{\"name\":\"<project>\"}' %s/admin/v1/projects\n", base)
+	_, _ = fmt.Fprintln(stdout, "  or in the TUI: Admin > Access > Projects, then n.")
 }
 
 func dockerLoginHost(publicURL string) string {
