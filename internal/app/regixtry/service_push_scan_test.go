@@ -55,8 +55,12 @@ func newPushScanService(t *testing.T) (*Service, *blockingScanRunner, func()) {
 	runner := &blockingScanRunner{release: make(chan struct{})}
 	service.SetScanRunner(runner)
 	return service, runner, func() {
-		close(runner.release)
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-runner.release: // already released by the test
+		default:
+			close(runner.release)
+		}
+		service.WaitForBackgroundWork()
 		cleanup()
 	}
 }
@@ -702,5 +706,41 @@ func TestPushScanLimiterNeverExceedsCapsUnderParallelIdentitiesAndLeaksNoSlot(t 
 	defer limiter.mu.Unlock()
 	if limiter.total != 0 || len(limiter.perRepo) != 0 || len(limiter.perPusher) != 0 {
 		t.Fatalf("slots leaked: total=%d repo=%d pusher=%d", limiter.total, len(limiter.perRepo), len(limiter.perPusher))
+	}
+}
+
+// TestRefusedPushScansAreDeferredAndScannedOnceSlotsFree: a push refused at
+// admission is not dropped; it is retried within the caps, so it is scanned
+// even though the scheduled sweep is disabled (ScheduleEnabled defaults to
+// false) and every slot is released afterwards.
+func TestRefusedPushScansAreDeferredAndScannedOnceSlotsFree(t *testing.T) {
+	service, runner, cleanup := newPushScanService(t)
+	service.SetPushScanLimits(2, 8, 2)
+	defer cleanup()
+
+	digests := make([]string, 5)
+	for i := range digests {
+		digests[i] = pushScanDigest("d", i)
+		service.startPushScan("tenant-a", "a/app", "t", digests[i], "writer-a")
+	}
+	waitUntil(t, "two admitted scans", func() bool { return pushScanSlotsInUse(service) == 2 })
+	if status := latestPushScanStatus(service, "a/app", digests[4]); status == ports.ScanRunStatusCompleted {
+		t.Fatalf("deferred digest scanned while every slot is held")
+	}
+
+	// Free the slots: the deferred digests must now be scanned to completion.
+	service.SetScanRunner(&fakeScanRunner{})
+	close(runner.release)
+	waitUntilWithin(t, 10*time.Second, "every deferred digest to complete", func() bool {
+		for _, d := range digests {
+			if latestPushScanStatus(service, "a/app", d) != ports.ScanRunStatusCompleted {
+				return false
+			}
+		}
+		return true
+	})
+	service.WaitForBackgroundWork()
+	if got := pushScanSlotsInUse(service); got != 0 {
+		t.Fatalf("slots in use = %d after all scans finished, want 0 (no leak)", got)
 	}
 }
