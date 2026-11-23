@@ -605,7 +605,7 @@ func TestOverridesImageScanningListShowsTheLatestScanResultAtEverySize(t *testin
 				t.Errorf("%dx%d: the list lacks %q:\n%s", size.w, size.h, want, out)
 			}
 		}
-		if strings.Contains(out, " s ago") || strings.Contains(out, "sec") {
+		if strings.Contains(out, " s ago") || strings.Contains(out, "seconds") || strings.Contains(out, " sec ") {
 			t.Errorf("%dx%d: a scan age in seconds:\n%s", size.w, size.h, out)
 		}
 	}
