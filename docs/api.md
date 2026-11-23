@@ -35,7 +35,7 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | POST | `/admin/v1/users/{id}:disable` | none | `200`, user |
 | POST | `/admin/v1/users/{id}:reset-password` | `new_password` | `204`; `422` for a robot |
 | GET | `/admin/v1/users/{id}/grants` | none | `200`, array of grants |
-| PUT | `/admin/v1/users/{id}/grants/{repository}` | `role` | `200`, grant |
+| PUT | `/admin/v1/users/{id}/grants/{repository}` | `role` | `200`, grant; `422` for `repo-writer` or `repo-admin` given to a read-only user (`read-only users can only be readers`; a read-only user is capped at read whatever its grants say) |
 | DELETE | `/admin/v1/users/{id}/grants/{repository}` | none | `204` |
 | GET | `/admin/v1/users/{id}/admin-tokens` | none | `200`, array without secrets |
 | POST | `/admin/v1/users/{id}/admin-tokens` | `name`, optional `ttl` (number plus `h`, `d` or `y`, for example `12h`, `30d`, `2y`; default 30 days; maximum 2 years), or the older `ttl_seconds` (seconds; maximum `63072000`), never both | `201`, token and secret |
@@ -85,7 +85,7 @@ JSON bodies are decoded rejecting unknown fields and multiple bodies.
 | GET | `/admin/v1/repository-scan-summaries?limit=` | none | `200`, one row per repository with its latest scan run, collapsed before `limit` |
 | GET | `/admin/v1/secret-scan-findings?repository=&digest=` | none | `200`, secret-scan findings for that repository/digest pair |
 | GET | `/admin/v1/repositories/{repo}/grants` | none | `200`, array of grants for that repository |
-| PUT | `/admin/v1/repositories/{repo}/grants/{username}` | `role` | `200`, grant |
+| PUT | `/admin/v1/repositories/{repo}/grants/{username}` | `role` | `200`, grant; `422` for `repo-writer` or `repo-admin` given to a read-only user (`read-only users can only be readers`); a read-only caller is refused (`403`) even when it holds a repo-admin or project-admin grant |
 | DELETE | `/admin/v1/repositories/{repo}/grants/{username}` | none | `204` |
 | POST | `/admin/v1/gc/reports` | none | `201`, computed report of unreferenced, grace-expired blob candidates; always reachable regardless of `REGISTRY_GC_DELETE_ENABLED` |
 | GET | `/admin/v1/gc/reports/{id}` | none | `200`, a previously computed report by id, with its full candidate list |

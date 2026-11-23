@@ -773,6 +773,9 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	if err := role.Validate(); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
+	if err := refuseReadOnlyExactGrant(subject, role); err != nil {
+		return domainauth.RepoGrant{}, err
+	}
 	if err := s.refuseRepoGrantOnProjectRobot(ctx, subject); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
@@ -793,6 +796,18 @@ func (s *Service) PutRepoGrant(ctx context.Context, actor domainauth.Principal, 
 	}
 
 	return grant, nil
+}
+
+// refuseReadOnlyExactGrant keeps misleading data out of the store: a
+// read-only user is capped at read whatever its grants say (Principal), so a
+// writer or admin exact grant would be inert. Rows that predate this rule stay
+// capped at decision time.
+func refuseReadOnlyExactGrant(target domainauth.User, role domainauth.RepoRole) error {
+	if target.IsReadOnly && role != domainauth.RepoRoleReader {
+		return domainauth.NewValidationError("read-only users can only be readers")
+	}
+
+	return nil
 }
 
 func (s *Service) PutAdminUserRepoGrant(ctx context.Context, actor domainauth.Principal, input ports.AdminPutRepoGrantInput) (ports.AdminRepoGrant, error) {
@@ -895,6 +910,9 @@ func (s *Service) PutRepositoryGrant(ctx context.Context, actor domainauth.Princ
 
 	target, err := s.store.GetUserByUsername(ctx, normalizeUsername(username))
 	if err != nil {
+		return domainauth.RepoGrant{}, err
+	}
+	if err := refuseReadOnlyExactGrant(target, role); err != nil {
 		return domainauth.RepoGrant{}, err
 	}
 	if err := s.refuseRepoGrantOnProjectRobot(ctx, target); err != nil {
