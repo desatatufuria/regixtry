@@ -376,8 +376,9 @@ func TestMigrationsCreateOnlyAuthTables(t *testing.T) {
 	}
 
 	// Deliberately includes auth_access_events: the append-only audit table of
-	// grant and token changes added for the Overview's recent changes.
-	want := []string{"auth_access_events", "auth_project_grants", "auth_repo_grants", "auth_tokens", "auth_users"}
+	// grant and token changes added for the Overview's recent changes, and
+	// auth_login_failures, the aggregated login failures.
+	want := []string{"auth_access_events", "auth_login_failures", "auth_project_grants", "auth_repo_grants", "auth_tokens", "auth_users"}
 	if len(names) != len(want) {
 		t.Fatalf("auth tables = %#v, want %#v", names, want)
 	}

@@ -72,6 +72,22 @@ func migrationStatements() []string {
 			FOREIGN KEY(user_id) REFERENCES auth_users(id) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS auth_project_grants_project_idx ON auth_project_grants (project, user_id);`,
+		// Aggregated login failures: one row per (5-minute window, endpoint,
+		// reason, account key, ip). The account is an existing account's name or
+		// "hash:<8 hex>", never a raw unknown username. Additive: a new table
+		// that an older binary never reads. The primary key leads with
+		// window_start, so it already serves the by-window scans and the purge.
+		`CREATE TABLE IF NOT EXISTS auth_login_failures (
+			window_start TEXT NOT NULL,
+			endpoint TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			account TEXT NOT NULL,
+			ip TEXT NOT NULL,
+			count BIGINT NOT NULL,
+			first_seen TEXT NOT NULL,
+			last_seen TEXT NOT NULL,
+			PRIMARY KEY(window_start, endpoint, reason, account, ip)
+		);`,
 	}
 }
 
