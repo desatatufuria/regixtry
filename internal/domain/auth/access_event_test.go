@@ -10,7 +10,7 @@ import (
 func TestAccessActionIsKnown(t *testing.T) {
 	t.Parallel()
 
-	for _, action := range []AccessAction{AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated, AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated, AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted, AccessActionProjectGrantPut, AccessActionProjectGrantDelete, AccessActionProjectCreated, AccessActionProjectDeleted} {
+	for _, action := range []AccessAction{AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated, AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated, AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted, AccessActionProjectGrantPut, AccessActionProjectGrantDelete, AccessActionProjectCreated, AccessActionProjectDeleted, AccessActionLoginBackoffReset} {
 		if !action.IsKnown() {
 			t.Errorf("%q should be known", action)
 		}
@@ -42,6 +42,7 @@ func TestAccessActionValues(t *testing.T) {
 		AccessActionProjectGrantDelete: "project.grant.delete",
 		AccessActionProjectCreated:     "project.created",
 		AccessActionProjectDeleted:     "project.deleted",
+		AccessActionLoginBackoffReset:  "login.backoff.reset",
 	}
 	for action, value := range want {
 		if string(action) != value {

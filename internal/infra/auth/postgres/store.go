@@ -14,6 +14,8 @@ import (
 
 type Store struct {
 	db *sql.DB
+	// windowRowCap overrides loginFailureRowsPerWindow (tests only).
+	windowRowCap int
 }
 
 func New(dsn string) (*Store, error) {

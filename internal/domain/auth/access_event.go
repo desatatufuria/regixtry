@@ -57,6 +57,11 @@ const (
 	AccessActionProjectCreated AccessAction = "project.created"
 	// AccessActionProjectDeleted is a project deleted.
 	AccessActionProjectDeleted AccessAction = "project.deleted"
+	// AccessActionLoginBackoffReset is an administrator clearing the login
+	// backoff counter of one account. The subject is the account's name, or
+	// its "hash:<8 hex>" label when no such account exists: a raw unknown
+	// username is never stored.
+	AccessActionLoginBackoffReset AccessAction = "login.backoff.reset"
 )
 
 // accessEventProjectPrefix marks a project name stored in the repository
@@ -77,7 +82,7 @@ func (a AccessAction) IsKnown() bool {
 	case AccessActionGrantPut, AccessActionGrantDelete, AccessActionTokenIssued, AccessActionTokenRevoked, AccessActionRobotCreated,
 		AccessActionUserCreated, AccessActionUserEnabled, AccessActionUserDisabled, AccessActionUserUpdated,
 		AccessActionUserPasswordReset, AccessActionUserDeleted, AccessActionRobotDeleted,
-		AccessActionProjectGrantPut, AccessActionProjectGrantDelete, AccessActionProjectCreated, AccessActionProjectDeleted:
+		AccessActionProjectGrantPut, AccessActionProjectGrantDelete, AccessActionProjectCreated, AccessActionProjectDeleted, AccessActionLoginBackoffReset:
 		return true
 	}
 

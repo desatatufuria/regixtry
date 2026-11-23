@@ -383,3 +383,120 @@ type AuthService interface {
 	ListRobots(ctx context.Context, actor domainauth.Principal) ([]domainauth.User, error)
 	DeleteRobot(ctx context.Context, actor domainauth.Principal, userID string) error
 }
+
+// LoginFailureObservation is one rejected credential as the HTTP adapter sees
+// it. Account is the existing account's normalized name, or the short hash
+// label ("hash:<8 hex>") for an unknown username: a raw unknown username never
+// reaches this type. It is empty for bearer failures.
+type LoginFailureObservation struct {
+	At       time.Time
+	Endpoint string
+	Reason   string
+	Account  string
+	IP       string
+}
+
+// LoginFailureRecorder receives every rejected credential exactly once. An
+// implementation must never block the caller or fail a login.
+type LoginFailureRecorder interface {
+	RecordLoginFailure(observation LoginFailureObservation)
+}
+
+// LoginFailureRecord is the aggregated counter of one (window, endpoint,
+// reason, account, ip) key: the unit that is persisted.
+type LoginFailureRecord struct {
+	WindowStart time.Time `json:"window_start"`
+	Endpoint    string    `json:"endpoint"`
+	Reason      string    `json:"reason"`
+	Account     string    `json:"account"`
+	IP          string    `json:"ip"`
+	Count       int64     `json:"count"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
+}
+
+// LoginFailureFilter narrows a failures listing. Zero values mean "any".
+type LoginFailureFilter struct {
+	From, To time.Time
+	Account  string
+	IP       string
+	Reason   string
+}
+
+// LoginFailureCursor is the sort key of the last row of a page.
+type LoginFailureCursor struct {
+	WindowStart time.Time
+	Endpoint    string
+	Reason      string
+	Account     string
+	IP          string
+}
+
+// LoginFailureSummary counts the failures recorded since a point in time.
+type LoginFailureSummary struct {
+	Failures         int64
+	DistinctIPs      int
+	DistinctAccounts int
+}
+
+// LoginFailureStore persists the aggregated login failures. It is optional on
+// an AuthStore: the auth service uses it when the store implements it.
+type LoginFailureStore interface {
+	// AddLoginFailures adds every record's count to its key (upsert-add),
+	// widening first_seen and last_seen, in one transaction.
+	AddLoginFailures(ctx context.Context, records []LoginFailureRecord) error
+	// PurgeLoginFailures deletes at most limit rows whose window started
+	// before the cutoff and returns how many it deleted.
+	PurgeLoginFailures(ctx context.Context, before time.Time, limit int) (int, error)
+	// ListLoginFailures returns rows newest window first, strictly after the
+	// cursor, at most limit.
+	ListLoginFailures(ctx context.Context, filter LoginFailureFilter, after *LoginFailureCursor, limit int) ([]LoginFailureRecord, error)
+	// SummarizeLoginFailures totals the rows seen at or after since.
+	SummarizeLoginFailures(ctx context.Context, since time.Time) (LoginFailureSummary, error)
+}
+
+// AdminLoginFailurePage is one page of aggregated login failures. Next is the
+// opaque cursor of the following page, empty on the last page.
+type AdminLoginFailurePage struct {
+	Failures []LoginFailureRecord `json:"failures"`
+	Next     string               `json:"next"`
+}
+
+// AdminLoginSummary is the last-15-minutes picture of login failures.
+type AdminLoginSummary struct {
+	WindowMinutes     int   `json:"window_minutes"`
+	Failures          int64 `json:"failures"`
+	DistinctIPs       int   `json:"distinct_ips"`
+	DistinctAccounts  int   `json:"distinct_accounts"`
+	AccountsInBackoff int   `json:"accounts_in_backoff"`
+}
+
+// AdminBackoffAccount is one account currently waiting out a login backoff.
+// Account is the name for an existing account, else "hash:<8 hex>".
+type AdminBackoffAccount struct {
+	Account          string `json:"account"`
+	Failures         int    `json:"failures"`
+	RemainingSeconds int    `json:"remaining_seconds"`
+}
+
+// AdminLoginBackoff is the live login backoff state of this process.
+type AdminLoginBackoff struct {
+	Mode                     string                `json:"mode"`
+	Threshold                int                   `json:"threshold"`
+	BaseSeconds              int                   `json:"base_seconds"`
+	MaxSeconds               int                   `json:"max_seconds"`
+	MaxConcurrency           int                   `json:"max_concurrency"`
+	TrustedProxiesConfigured bool                  `json:"trusted_proxies_configured"`
+	Accounts                 []AdminBackoffAccount `json:"accounts"`
+}
+
+// LoginSecurityAdmin is the global-administrator view of login failures and
+// the live backoff, served under /admin/v1/security.
+type LoginSecurityAdmin interface {
+	ListAdminLoginFailures(ctx context.Context, actor domainauth.Principal, filter LoginFailureFilter, limit int, after string) (AdminLoginFailurePage, error)
+	AdminLoginSummary(ctx context.Context, actor domainauth.Principal) (AdminLoginSummary, error)
+	AdminLoginBackoff(ctx context.Context, actor domainauth.Principal) (AdminLoginBackoff, error)
+	// ResetAdminLoginBackoff clears the backoff counter of one account and
+	// returns how the account is named (its name, or its hash label).
+	ResetAdminLoginBackoff(ctx context.Context, actor domainauth.Principal, account string) (string, error)
+}

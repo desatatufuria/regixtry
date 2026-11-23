@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	domainauth "regixtry/internal/domain/auth"
 	"regixtry/internal/ports"
@@ -80,6 +81,7 @@ func loginFailureReason(err error) string {
 func (r *Router) recordLoginFailure(req *stdhttp.Request, endpoint string, username string, err error) {
 	reason := loginFailureReason(err)
 	r.loginFailures.inc(reason)
+	r.aggregateLoginFailure(req, endpoint, username, reason)
 	if r.logger == nil {
 		return
 	}
@@ -97,25 +99,77 @@ func (r *Router) recordLoginThrottle(req *stdhttp.Request, endpoint string, user
 		reason = "throttled"
 	}
 	r.loginFailures.inc(reason)
+	r.aggregateLoginFailure(req, endpoint, username, reason)
 	if r.logger == nil {
 		return
 	}
 	r.logger.Printf("login failed endpoint=%s ip=%s reason=%q %s", endpoint, clientIP(req, r.trustedProxies), reason, accountLogField(username, reason))
 }
 
-// accountLogField renders the account for the log. An existing account is
-// logged by its normalized (and bounded) name; an unknown username is
-// attacker-chosen and unbounded in variety, so it is logged as a short hash.
-func accountLogField(username string, reason string) string {
+// accountIdentity decides how a failed login's account is written anywhere it
+// is recorded: an existing account by its normalized (and bounded) name; an
+// unknown username is attacker-chosen and unbounded in variety, so it is only
+// ever its short hash (hashed true). A throttled refusal never looked the
+// account up, so it is hashed too.
+func accountIdentity(username string, reason string) (value string, hashed bool) {
 	normalized := strings.ToLower(strings.TrimSpace(username))
 	if reason == "unknown user" || strings.HasPrefix(reason, "throttled") {
 		sum := sha256.Sum256([]byte(normalized))
-		return "account_hash=" + hex.EncodeToString(sum[:4])
+		return hex.EncodeToString(sum[:4]), true
 	}
 	if runes := []rune(normalized); len(runes) > maxLoggedAccountRunes {
 		normalized = string(runes[:maxLoggedAccountRunes])
 	}
-	return "account=" + logToken(normalized)
+	return normalized, false
+}
+
+// accountLogField renders the account for the log line.
+func accountLogField(username string, reason string) string {
+	value, hashed := accountIdentity(username, reason)
+	if hashed {
+		return "account_hash=" + value
+	}
+	return "account=" + logToken(value)
+}
+
+// accountAggregateKey is the account as the aggregated record keeps it: the
+// name, or "hash:<8 hex>", the same hash the log line carries. Empty for a
+// bearer failure.
+func accountAggregateKey(username string, reason string) string {
+	if username == "" {
+		return ""
+	}
+	value, hashed := accountIdentity(username, reason)
+	if hashed {
+		return "hash:" + value
+	}
+	return value
+}
+
+// aggregateEndpoint bounds the endpoint label of an aggregated record to the
+// credential surfaces; anything else is "other".
+func aggregateEndpoint(endpoint string) string {
+	switch endpoint {
+	case "/auth/token", "/v2", "/admin/v1":
+		return endpoint
+	}
+	return "other"
+}
+
+// aggregateLoginFailure hands one rejected credential to the aggregator. It is
+// called from the two places that write the "login failed" line, so every
+// failure contributes exactly once, whether or not a logger is set.
+func (r *Router) aggregateLoginFailure(req *stdhttp.Request, endpoint string, username string, reason string) {
+	if r.failureRecorder == nil {
+		return
+	}
+	r.failureRecorder.RecordLoginFailure(ports.LoginFailureObservation{
+		At:       time.Now().UTC(),
+		Endpoint: aggregateEndpoint(endpoint),
+		Reason:   reason,
+		Account:  accountAggregateKey(username, reason),
+		IP:       clientIP(req, r.trustedProxies),
+	})
 }
 
 // logToken leaves plain names bare and quotes anything with characters that
