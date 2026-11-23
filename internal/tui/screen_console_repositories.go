@@ -24,6 +24,14 @@ type consoleRepositoriesScreen struct {
 	project  string
 	selected int
 
+	// Under a project the screen is a folder tree (screen_console_tree.go):
+	// tree is derived from the project's repositories, rootPath is the folder
+	// the view is rooted at (the project until f goes deeper), expanded is the
+	// set of open folders by path and selected indexes the visible rows.
+	tree     folderTree
+	rootPath string
+	expanded map[string]bool
+
 	confirm confirmPrompt
 	// busy is set from the moment a confirmed delete is sent until its result
 	// arrives, even if Esc closed the prompt meanwhile.
@@ -65,6 +73,12 @@ func (s consoleRepositoriesScreen) names() []string {
 }
 
 func (s consoleRepositoriesScreen) selectedRepository() (appregixtry.RepositorySummary, bool) {
+	if s.filtered {
+		if row, ok := s.selectedRow(); ok && row.node.isRepository {
+			return row.node.repository, true
+		}
+		return appregixtry.RepositorySummary{}, false
+	}
 	rows := s.visible()
 	if len(rows) == 0 {
 		return appregixtry.RepositorySummary{}, false
@@ -75,7 +89,8 @@ func (s consoleRepositoriesScreen) selectedRepository() (appregixtry.RepositoryS
 // narrowedTo shows only one project's repositories.
 func (s consoleRepositoriesScreen) narrowedTo(project string) consoleRepositoriesScreen {
 	s.filtered, s.project, s.selected = true, project, 0
-	return s
+	s.rootPath, s.expanded = project, nil
+	return s.rebuildTree()
 }
 
 // ---- messages ----
@@ -147,7 +162,11 @@ func (s consoleRepositoriesScreen) applyCatalog(msg consoleCatalogMsg) consoleRe
 	if current, ok := s.selectedRepository(); ok {
 		keep = current.Name
 	}
+	mark, marked := s.treeMark()
 	s.items = slices.DeleteFunc(slices.Clone(msg.result), func(r appregixtry.RepositorySummary) bool { return hide && s.shared.isDeleted(repositoryKey(r.Name)) })
+	if s.filtered {
+		return s.rebuildTree().reselect(mark, marked)
+	}
 	return s.keepSelection(keep)
 }
 
@@ -169,7 +188,11 @@ func (s consoleRepositoriesScreen) withoutRepositories(names []string) consoleRe
 	for _, name := range names {
 		s.shared.markDeleted(repositoryKey(name))
 	}
+	mark, marked := s.treeMark()
 	s.items = slices.DeleteFunc(slices.Clone(s.items), func(r appregixtry.RepositorySummary) bool { return slices.Contains(names, r.Name) })
+	if s.filtered {
+		return s.rebuildTree().reselect(mark, marked)
+	}
 	s.selected = boundedIndex(s.selected, len(s.visible()))
 	return s
 }
@@ -182,7 +205,11 @@ func (s consoleRepositoriesScreen) withOneTagLess(repository string) consoleRepo
 			items[i].TagCount--
 		}
 	}
+	mark, marked := s.treeMark()
 	s.items = items
+	if s.filtered {
+		return s.rebuildTree().reselect(mark, marked)
+	}
 	return s
 }
 
@@ -208,6 +235,11 @@ func (s consoleRepositoriesScreen) updateKey(env screenEnv, msg keyMsg) (adminSc
 			s.shared.setBusy(true)
 		}
 		return s, cmd, true
+	}
+	if s.filtered {
+		if next, cmd, handled := s.updateTreeKey(msg); handled {
+			return next, cmd, true
+		}
 	}
 	current, has := s.selectedRepository()
 	if cursor, moved := consoleMove(msg, s.selected, len(s.visible())); moved {
@@ -304,6 +336,9 @@ func formatRepositoryLastPushed(t time.Time) string {
 // ---- view ----
 
 func (s consoleRepositoriesScreen) Keys() screenKeys {
+	if s.filtered {
+		return screenKeys{short: treeHints(false)}
+	}
 	hints := []key.Binding{
 		key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "move")),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open tags")),
@@ -319,6 +354,9 @@ func (s consoleRepositoriesScreen) Keys() screenKeys {
 }
 
 func (s consoleRepositoriesScreen) View(theme adminTheme, env screenEnv) screenFrame {
+	if s.filtered {
+		return s.treeView(theme, env)
+	}
 	width, height := env.Layout.Width, env.Layout.Height
 	bodyW, bodyH := consoleBodySize(width, height)
 	rows := s.visible()
