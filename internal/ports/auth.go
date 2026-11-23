@@ -496,5 +496,7 @@ type LoginSecurityAdmin interface {
 	ListAdminLoginFailures(ctx context.Context, actor domainauth.Principal, filter LoginFailureFilter, limit int, after string) (AdminLoginFailurePage, error)
 	AdminLoginSummary(ctx context.Context, actor domainauth.Principal) (AdminLoginSummary, error)
 	AdminLoginBackoff(ctx context.Context, actor domainauth.Principal) (AdminLoginBackoff, error)
-	ResetAdminLoginBackoff(ctx context.Context, actor domainauth.Principal, account string) error
+	// ResetAdminLoginBackoff clears the backoff counter of one account and
+	// returns how the account is named (its name, or its hash label).
+	ResetAdminLoginBackoff(ctx context.Context, actor domainauth.Principal, account string) (string, error)
 }

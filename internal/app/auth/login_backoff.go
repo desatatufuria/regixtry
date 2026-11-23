@@ -232,3 +232,16 @@ func (b *loginBackoff) clear(key string) bool {
 	}
 	return ok
 }
+
+// keysForHash returns the keys whose short hash is hash (8 hex digits).
+func (b *loginBackoff) keysForHash(hash string) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var keys []string
+	for key := range b.entries {
+		if accountHash(key) == hash {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}

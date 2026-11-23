@@ -210,7 +210,51 @@ func LoginHashLabel(normalized string) string {
 	return "hash:" + accountHash(normalized)
 }
 
-// ResetAdminLoginBackoff is implemented with the reset endpoint.
-func (s *Service) ResetAdminLoginBackoff(context.Context, domainauth.Principal, string) error {
-	return domainauth.NewNotFoundError("login backoff", "")
+// loginBackoffResetAccountMax bounds the account text of a reset request.
+const loginBackoffResetAccountMax = 256
+
+// ResetAdminLoginBackoff clears the in-memory backoff counter of ONE account
+// and records an access event. account is a login name (any case, surrounding
+// spaces ignored) or a "hash:<8 hex>" label as the listings show it. An
+// account with no backoff state is a not-found error whether or not it
+// exists, and records nothing. The event names an existing account; any other
+// key appears only as its hash label. Global admin only.
+func (s *Service) ResetAdminLoginBackoff(ctx context.Context, actor domainauth.Principal, account string) (string, error) {
+	if err := requireAdmin(actor); err != nil {
+		return "", err
+	}
+	account = strings.TrimSpace(account)
+	if account == "" {
+		return "", domainauth.NewValidationError("account is required")
+	}
+	if len(account) > loginBackoffResetAccountMax || !utf8.ValidString(account) || strings.ContainsRune(account, 0) {
+		return "", domainauth.NewValidationError("account must be a short valid login name")
+	}
+
+	key := normalizeUsername(account)
+	if hash, isLabel := strings.CutPrefix(key, "hash:"); isLabel {
+		keys := s.backoff.keysForHash(hash)
+		switch len(keys) {
+		case 0:
+			return "", domainauth.NewNotFoundError("login backoff", "")
+		case 1:
+			key = keys[0]
+		default:
+			return "", domainauth.NewValidationError("the hash matches more than one account; reset it by name")
+		}
+	}
+	if !s.backoff.clear(key) {
+		return "", domainauth.NewNotFoundError("login backoff", "")
+	}
+
+	event := domainauth.AccessEvent{
+		Action:          domainauth.AccessActionLoginBackoffReset,
+		SubjectUsername: LoginHashLabel(key),
+		Detail:          "backoff counter cleared",
+	}
+	if user, err := s.store.GetUserByUsername(ctx, key); err == nil {
+		event.SubjectUserID, event.SubjectUsername = user.ID, user.Username
+	}
+	s.recordAccessEvent(ctx, actor, event)
+	return event.SubjectUsername, nil
 }

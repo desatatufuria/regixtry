@@ -23,6 +23,8 @@ func (r *Router) handleAdminSecurity(w stdhttp.ResponseWriter, req *stdhttp.Requ
 		r.handleAdminLoginSummary(w, req, principal)
 	case "login-backoff":
 		r.handleAdminLoginBackoff(w, req, principal)
+	case "login-backoff/reset":
+		r.handleAdminLoginBackoffReset(w, req, principal)
 	default:
 		writeAdminError(w, domainauth.NewNotFoundError("route", req.URL.Path), ports.Challenge{})
 	}
@@ -101,4 +103,30 @@ func (r *Router) handleAdminLoginBackoff(w stdhttp.ResponseWriter, req *stdhttp.
 	}
 	state.TrustedProxiesConfigured = len(r.trustedProxies) > 0
 	writeJSON(w, stdhttp.StatusOK, state)
+}
+
+// handleAdminLoginBackoffReset serves POST /admin/v1/security/login-backoff/reset
+// with {"account":"alice"}: it clears the backoff counter of that one account
+// (a login name, or the "hash:xxxxxxxx" label of an unknown username) and
+// answers {"account":"alice","reset":true}. An account with no backoff state is
+// a 404. Audited as the access event login.backoff.reset.
+func (r *Router) handleAdminLoginBackoffReset(w stdhttp.ResponseWriter, req *stdhttp.Request, principal domainauth.Principal) {
+	if req.Method != stdhttp.MethodPost {
+		w.Header().Set("Allow", stdhttp.MethodPost)
+		w.WriteHeader(stdhttp.StatusMethodNotAllowed)
+		return
+	}
+	var payload struct {
+		Account string `json:"account"`
+	}
+	if err := decodeAdminJSON(req, &payload); err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	label, err := r.security.ResetAdminLoginBackoff(req.Context(), principal, payload.Account)
+	if err != nil {
+		writeAdminError(w, err, ports.Challenge{})
+		return
+	}
+	writeJSON(w, stdhttp.StatusOK, map[string]any{"account": label, "reset": true})
 }
