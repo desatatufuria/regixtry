@@ -307,8 +307,11 @@ func (s robotsScreen) enableConfirm(robot ports.AdminRobot, enable bool) confirm
 func (s robotsScreen) deleteConfirm(robot ports.AdminRobot) confirmPrompt {
 	gen, id, name := s.gen, robot.ID, robot.Username
 	detail := "no repository access"
-	if robot.Repository != "" {
+	switch {
+	case robot.Repository != "":
 		detail = "repository " + robot.Repository + ", role " + grantRoleLabel(robot.Role)
+	case robot.Project != "":
+		detail = "project " + robot.Project + ", role " + grantRoleLabel(robot.Role)
 	}
 	return newConfirmPrompt(
 		"Delete robot "+name,
@@ -437,7 +440,22 @@ func firstExpiry(tokens []ports.AdminToken, now time.Time) (time.Time, bool) {
 // withoutAccess reports an enabled robot that has no repository grant: it can
 // authenticate but cannot pull or push.
 func withoutAccess(robot ports.AdminRobot) bool {
-	return robot.Enabled && robot.Repository == ""
+	return robot.Enabled && !robotHasGrant(robot)
+}
+
+// robotHasGrant reports whether the robot holds its one grant: on a
+// repository, or on a whole project.
+func robotHasGrant(robot ports.AdminRobot) bool {
+	return robot.Repository != "" || robot.Project != ""
+}
+
+// robotAccessName is the access of a robot as a name: its repository, or
+// "odabank/*" for a project robot (every repository of the project).
+func robotAccessName(robot ports.AdminRobot) string {
+	if robot.Repository == "" && robot.Project != "" {
+		return robot.Project + "/*"
+	}
+	return robot.Repository
 }
 
 var robotsKeys = screenKeys{short: []key.Binding{
@@ -456,8 +474,8 @@ var robotsKeys = screenKeys{short: []key.Binding{
 
 // robotDetail is the line under a robot's name in a dialog: its access.
 func robotDetail(robot ports.AdminRobot) string {
-	if robot.Repository == "" {
+	if !robotHasGrant(robot) {
 		return "no repository access"
 	}
-	return grantRoleLabel(robot.Role) + " on " + robot.Repository
+	return grantRoleLabel(robot.Role) + " on " + robotAccessName(robot)
 }

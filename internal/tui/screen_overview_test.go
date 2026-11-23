@@ -77,6 +77,7 @@ func TestOverviewSidebarItemsOpenTheirScreens(t *testing.T) {
 		shellNavUsers:            screenAdminUsers,
 		shellNavRobots:           screenAdminRobots,
 		shellNavRepositoryAccess: screenAdminRepositoryAccess,
+		shellNavProjects:         screenAdminProjects,
 		shellNavImageScanning:    screenSecurityTrivy,
 		shellNavSecretScanning:   screenSecurityGitleaksConfig,
 		shellNavSigningPolicy:    screenSecuritySigningConfig,
@@ -493,5 +494,19 @@ func TestOverviewCriticalImagesCountIsCappedAtTheSampleSize(t *testing.T) {
 	client.repositoryScanSummaries = critical(overviewScanSummaryLimit - 1)
 	if out := overviewRender(overviewModelAt(t, client, 150, 24)); !strings.Contains(out, "24 images have critical findings") {
 		t.Errorf("an under-cap count is not exact:\n%s", out)
+	}
+}
+
+func TestOverviewCountsOnlyGrantlessRobotsAsWithoutAccess(t *testing.T) {
+	t.Parallel()
+	s := newOverviewScreen()
+	s = s.applyLoaded(overviewLoadedMsg{robots: []ports.AdminRobot{
+		{ID: "r-1", Username: "project-bot", Project: "odabank", Enabled: true},
+		{ID: "r-2", Username: "repo-bot", Repository: "team/api", Enabled: true},
+		{ID: "r-3", Username: "grantless", Enabled: true},
+		{ID: "r-4", Username: "off", Enabled: false},
+	}})
+	if got := strings.Join(s.robotsWithoutAccess, ","); got != "grantless" {
+		t.Fatalf("robots without access = %q, want only grantless", got)
 	}
 }

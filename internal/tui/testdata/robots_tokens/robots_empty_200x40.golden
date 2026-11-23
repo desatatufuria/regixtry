@@ -8,7 +8,8 @@
       Users                    │  │ No robots yet. Press n to create one.                                                                                  │  │ New robot                          n │  
     ▸ Robots                   │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                      │  
       Repository access        │                                                                                                                              │                                      │  
-                               │  EXPIRES is the token that ends first.                                                                                       │                                      │  
+      Projects                 │  EXPIRES is the token that ends first.                                                                                       │                                      │  
+                               │                                                                                                                              │                                      │  
   SECURITY                     │                                                                                                                              │                                      │  
       Image scanning           │                                                                                                                              │                                      │  
       Secret scanning          │                                                                                                                              │                                      │  
@@ -18,7 +19,6 @@
       Scan runs                │                                                                                                                              │                                      │  
       Secret findings          │                                                                                                                              │                                      │  
       Update channel           │                                                                                                                              │                                      │  
-                               │                                                                                                                              │                                      │  
                                │                                                                                                                              │                                      │  
                                │                                                                                                                              │                                      │  
                                │                                                                                                                              │                                      │  

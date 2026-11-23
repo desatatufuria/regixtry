@@ -1,0 +1,24 @@
+  Admin › Access › Projects                                                                                                    signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Project  ╭──────────────────────────────────────────────────────────────╮               4 projects, sorted by name
+    Overview                   │           │  Delete project sandbox?                                     │
+                               │           │                                                              │
+  ACCESS                       │           │  The project is removed together with its member grants.     │
+      Users                    │           │  The project must be empty.                                  │
+      Robots                   │           │                                                              │
+      Repository access        │           │  ╭────────────────────────────────────────────────────────╮  │
+    ▸ Projects                 │           │  │ sandbox                                                │  │
+                               │           │  │ 0 repositories, 0 tags                                 │  │
+  SECURITY                     │           │  ╰────────────────────────────────────────────────────────╯  │
+      Image scanning           │           │                                                              │
+      Secret scanning          │           │  Removes the project and all its member grants. The project  │
+      Signing policy           │           │  must be empty. Cannot be undone.                            │
+                               │           │                                                              │
+  OPERATIONS                   │           │   Delete                                         y / enter   │
+      Scan runs                │           │   Cancel                                               esc   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
+                               │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                         F2 mouse on  

@@ -8,17 +8,17 @@
       Users                    │  │   REPOSITORY                    PRINCIPAL         ROLE     SINCE       │  │ WHO HAS WHAT                       │  
       Robots                   │  │ ▸ team/api                      alice             Writer   14 Oct      │  │ alice user                [Writer] │  
     ▸ Repository access        │  │   team/api                      bob               Reader   2 Nov       │  │ carol user                [Writer] │  
-                               │  │   team/api                      carol             Writer   9 Nov       │  │ ci-publisher robot        [Writer] │  
-  SECURITY                     │  │   team/api                      ci-publisher      Writer   12 Jan      │  │ bob user                  [Reader] │  
-      Image scanning           │  │   team/docs                     alice             Reader   3 Mar       │  │ ACTIONS ON SELECTED GRANT          │  
-      Secret scanning          │  │   team/infra                    old-deploy        Admin    5 Feb       │  │ Open principal               enter │  
-      Signing policy           │  │                                                                        │  │ Grant access                     g │  
-                               │  │                                                                        │  │ Revoke alice on team/api         x │  
-  OPERATIONS                   │  │                                                                        │  │ No Admin on this repository. Only  │  
-      Scan runs                │  │                                                                        │  │ server admins can change access    │  
-      Secret findings          │  │                                                                        │  │ here.                              │  
-      Update channel           │  │                                                                        │  │                                    │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Projects                 │  │   team/api                      carol             Writer   9 Nov       │  │ ci-publisher robot        [Writer] │  
+                               │  │   team/api                      ci-publisher      Writer   12 Jan      │  │ bob user                  [Reader] │  
+  SECURITY                     │  │   team/docs                     alice             Reader   3 Mar       │  │ ACTIONS ON SELECTED GRANT          │  
+      Image scanning           │  │   team/infra                    old-deploy        Admin    5 Feb       │  │ Open principal               enter │  
+      Secret scanning          │  │                                                                        │  │ Grant access                     g │  
+      Signing policy           │  │                                                                        │  │ Revoke alice on team/api         x │  
+                               │  │                                                                        │  │ No Admin on this repository. Only  │  
+  OPERATIONS                   │  │                                                                        │  │ server admins can change access    │  
+      Scan runs                │  │                                                                        │  │ here.                              │  
+      Secret findings          │  │                                                                        │  │                                    │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
                                │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   / search   g grant access   x revoke   esc back   q quit                                                        F2 mouse on  

@@ -8,6 +8,7 @@
     ▸ Users                    │  │ This user was not found.                                                                                       │  
       Robots                   │  │ Esc goes back to the Users list.                                                                               │  
       Repository access        │  │                                                                                                                │  
+      Projects                 │  │                                                                                                                │  
                                │  │                                                                                                                │  
   SECURITY                     │  │                                                                                                                │  
       Image scanning           │  │                                                                                                                │  
@@ -18,7 +19,6 @@
       Scan runs                │  │                                                                                                                │  
       Secret findings          │  │                                                                                                                │  
       Update channel           │  │                                                                                                                │  
-                               │  │                                                                                                                │  
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   space enable/disable   p password   g grant access   t tokens   d disable   r refresh   esc back   q quit                                           

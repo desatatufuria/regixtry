@@ -8,6 +8,7 @@
       Users                    │  │   REPOSITORY                    PRINCIPAL         ROLE     SINCE       │  │                                    │  
       Robots                   │  │ Could not read grants.                                                 │  │                                    │  
     ▸ Repository access        │  │                                                                        │  │                                    │  
+      Projects                 │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   SECURITY                     │  │                                                                        │  │                                    │  
       Image scanning           │  │                                                                        │  │                                    │  
@@ -17,8 +18,7 @@
   OPERATIONS                   │  │                                                                        │  │                                    │  
       Scan runs                │  │                                                                        │  │                                    │  
       Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  │                                                                        │  │                                    │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
                                │  Could not read grants: boom. Press r to retry.                              ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   / search   r retry   g grant access   x revoke   esc back   q quit                                              F2 mouse on  

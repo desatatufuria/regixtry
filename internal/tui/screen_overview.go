@@ -148,6 +148,8 @@ func overviewOpenItem(id shellNavID) tea.Cmd {
 		return overviewOpen(overviewOpenRobots)
 	case shellNavRepositoryAccess:
 		return openRepoAccess()
+	case shellNavProjects:
+		return navigate(screenAdminProjects)
 	case shellNavImageScanning:
 		return navigate(screenSecurityTrivy)
 	case shellNavSecretScanning:
@@ -211,7 +213,7 @@ func (s overviewScreen) applyLoaded(msg overviewLoadedMsg) overviewScreen {
 	s.expiringCount, s.expiringCapped, s.soonest, s.expiringErr = 0, false, ports.AdminExpiringToken{}, errText(msg.expiringErr)
 	s.events, s.eventsErr = msg.events, errText(msg.eventsErr)
 	for _, robot := range msg.robots {
-		if robot.Enabled && robot.Repository == "" {
+		if robot.Enabled && robot.Repository == "" && robot.Project == "" {
 			s.robotsWithoutAccess = append(s.robotsWithoutAccess, robot.Username)
 			s.robotsWithoutAccessIDs = append(s.robotsWithoutAccessIDs, robot.ID)
 		}

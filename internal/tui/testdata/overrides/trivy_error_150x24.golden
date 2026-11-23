@@ -8,6 +8,7 @@
       Users                    │  │   REPOSITORY           CRIT  HIGH  LAST SCAN        STATUS     ENABLED │  │ Select a repository to see its ov… │  
       Robots                   │  │ Could not read the overrides: the admin API is unreachable             │  │                                    │  
       Repository access        │  │ Press r to try again.                                                  │  │                                    │  
+      Projects                 │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   SECURITY                     │  │                                                                        │  │                                    │  
     ▸ Image scanning           │  │                                                                        │  │                                    │  
@@ -16,9 +17,8 @@
                                │  │                                                                        │  │                                    │  
   OPERATIONS                   │  │                                                                        │  │                                    │  
       Scan runs                │  │                                                                        │  │                                    │  
-      Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
-                               │  One row per repository, severity first. enter opens its scan history,       │                                    │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  One row per repository, severity first. enter opens its scan history,       │                                    │  
                                │  o edits its override.                                                       ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab switch tabs   ↑↓ move   o override   enter scan history   r refresh   esc back   q quit                                            F2 mouse on  

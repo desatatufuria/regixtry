@@ -1,0 +1,60 @@
+  Admin › Access › Projects                                                                                                                                                                          signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Projects                                                                                                                                                      4 projects, sorted by name
+    Overview                   │
+                               │
+  ACCESS                       │
+      Users                    │
+      Robots                   │
+      Repository access        │
+    ▸ Projects                 │
+                               │
+  SECURITY                     │
+      Image scanning           │
+      Secret scanning          │
+      Signing policy           │
+                               │
+  OPERATIONS                   │
+      Scan runs                │
+      Secret findings          │
+      Update channel           │
+                               │                                              ╭──────────────────────────────────────────────────────────────╮
+                               │                                              │  New project                                                 │
+                               │                                              │                                                              │
+                               │                                              │  Project name                                                │
+                               │                                              │   odabank▏                                                   │
+                               │                                              │  Project odabank already exists.                             │
+                               │                                              │                                                              │
+                               │                                              │  ╭────────────────────────────────────────────────────────╮  │
+                               │                                              │  │ odabank                                                │  │
+                               │                                              │  │ new project, 0 repositories                            │  │
+                               │                                              │  ╰────────────────────────────────────────────────────────╯  │
+                               │                                              │                                                              │
+                               │                                              │  Creates project odabank. Repositories pushed as             │
+                               │                                              │  odabank/... belong to it.                                   │
+                               │                                              │                                                              │
+                               │                                              │   Create project                                     enter   │
+                               │                                              │   Cancel                                               esc   │
+                               │                                              ╰──────────────────────────────────────────────────────────────╯
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  enter create   esc cancel                                                                                                                                                                                    F2 mouse on  

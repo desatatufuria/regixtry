@@ -1,0 +1,60 @@
+  Admin › Access › Projects                                                                                                                                                                          signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Projects                                                                                                                                                      4 projects, sorted by name
+    Overview                   │
+                               │
+  ACCESS                       │
+      Users                    │
+      Robots                   │
+      Repository access        │
+    ▸ Projects                 │
+                               │
+  SECURITY                     │
+      Image scanning           │
+      Secret scanning          │
+      Signing policy           │
+                               │
+  OPERATIONS                   │
+      Scan runs                │
+      Secret findings          │
+      Update channel           │
+                               │                                              ╭──────────────────────────────────────────────────────────────╮
+                               │                                              │  New project                                                 │
+                               │                                              │                                                              │
+                               │                                              │  Project name                                                │
+                               │                                              │   Oda/bank▏                                                  │
+                               │                                              │  A project name has no slash. Repositories go inside the     │
+                               │                                              │  project.                                                    │
+                               │                                              │                                                              │
+                               │                                              │  ╭────────────────────────────────────────────────────────╮  │
+                               │                                              │  │ (no valid name yet)                                    │  │
+                               │                                              │  │ type a lowercase name                                  │  │
+                               │                                              │  ╰────────────────────────────────────────────────────────╯  │
+                               │                                              │                                                              │
+                               │                                              │  Nothing is created until the name is valid.                 │
+                               │                                              │                                                              │
+                               │                                              │   Create project                                     enter   │
+                               │                                              │   Cancel                                               esc   │
+                               │                                              ╰──────────────────────────────────────────────────────────────╯
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  enter create   esc cancel                                                                                                                                                                                    F2 mouse on  

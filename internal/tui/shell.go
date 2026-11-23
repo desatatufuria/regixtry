@@ -39,6 +39,7 @@ const (
 	shellNavUsers            shellNavID = "users"
 	shellNavRobots           shellNavID = "robots"
 	shellNavRepositoryAccess shellNavID = "repository-access"
+	shellNavProjects         shellNavID = "projects"
 	shellNavImageScanning    shellNavID = "image-scanning"
 	shellNavSecretScanning   shellNavID = "secret-scanning"
 	shellNavSigningPolicy    shellNavID = "signing-policy"
@@ -65,6 +66,7 @@ var shellNavGroups = []shellNavGroup{
 		{shellNavUsers, "Users"},
 		{shellNavRobots, "Robots"},
 		{shellNavRepositoryAccess, "Repository access"},
+		{shellNavProjects, "Projects"},
 	}},
 	{Title: "SECURITY", Items: []shellNavItem{
 		{shellNavImageScanning, "Image scanning"},

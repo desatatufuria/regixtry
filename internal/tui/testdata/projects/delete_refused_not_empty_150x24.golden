@@ -1,0 +1,24 @@
+  Admin › Access › Projects                                                                                                    signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Projects                                                                                4 projects, sorted by name
+    Overview                   │           ╭──────────────────────────────────────────────────────────────╮
+                               │           │  Cannot delete project                                       │
+  ACCESS                       │           │                                                              │
+      Users                    │           │  project "odabank" still has 3 repositories; delete or       │
+      Robots                   │           │  finish them first                                           │
+      Repository access        │           │                                                              │
+    ▸ Projects                 │           │  ╭────────────────────────────────────────────────────────╮  │
+                               │           │  │ odabank                                                │  │
+  SECURITY                     │           │  │ 3 repositories, 27 tags                                │  │
+      Image scanning           │           │  ╰────────────────────────────────────────────────────────╯  │
+      Secret scanning          │           │                                                              │
+      Signing policy           │           │  Delete repositories one by one in Console › Projects ›      │
+                               │           │  odabank. Nothing was changed.                               │
+  OPERATIONS                   │           │                                                              │
+      Scan runs                │           │   Close                                        esc / enter   │
+      Secret findings          │           ╰──────────────────────────────────────────────────────────────╯
+      Update channel           │
+                               │
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  esc / enter close                                                                                                                      F2 mouse on  

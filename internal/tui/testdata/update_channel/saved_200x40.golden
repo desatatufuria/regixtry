@@ -8,9 +8,10 @@
       Users                    │  │    stable                                                                                                       │  │ Current version unknown (development build) │  
       Robots                   │  │   Default channel.                                                                                              │  │ Update               no newer release known │  
       Repository access        │  │  ▸ insider                                                                                             current  │  │ The background update check compares the    │  
-                               │  │   Alternative channel for the update check.                                                                     │  │ current version with the latest tag on the  │  
-  SECURITY                     │  │ Saved: the update check now uses insider                                                                        │  │ selected channel.                           │  
-      Image scanning           │  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────╯  
+      Projects                 │  │   Alternative channel for the update check.                                                                     │  │ current version with the latest tag on the  │  
+                               │  │ Saved: the update check now uses insider                                                                        │  │ selected channel.                           │  
+  SECURITY                     │  ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ╰─────────────────────────────────────────────╯  
+      Image scanning           │                                                                                                                                                                        
       Secret scanning          │                                                                                                                                                                        
       Signing policy           │                                                                                                                                                                        
                                │                                                                                                                                                                        
@@ -18,7 +19,6 @@
       Scan runs                │                                                                                                                                                                        
       Secret findings          │                                                                                                                                                                        
     ▸ Update channel           │                                                                                                                                                                        
-                               │                                                                                                                                                                        
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        

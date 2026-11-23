@@ -1,0 +1,60 @@
+  Admin › Access › Projects                                                                                                                                                                          signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  Projects                                                                                                                                                      4 projects, sorted by name
+    Overview                   │
+                               │
+  ACCESS                       │
+      Users                    │
+      Robots                   │
+      Repository access        │
+    ▸ Projects                 │
+                               │
+  SECURITY                     │
+      Image scanning           │
+      Secret scanning          │
+      Signing policy           │
+                               │
+  OPERATIONS                   │
+      Scan runs                │
+      Secret findings          │
+      Update channel           │
+                               │                                              ╭──────────────────────────────────────────────────────────────╮
+                               │                                              │  Delete project sandbox?                                     │
+                               │                                              │                                                              │
+                               │                                              │  The project is removed together with its member grants.     │
+                               │                                              │  The project must be empty.                                  │
+                               │                                              │                                                              │
+                               │                                              │  ╭────────────────────────────────────────────────────────╮  │
+                               │                                              │  │ sandbox                                                │  │
+                               │                                              │  │ 0 repositories, 0 tags                                 │  │
+                               │                                              │  ╰────────────────────────────────────────────────────────╯  │
+                               │                                              │                                                              │
+                               │                                              │  Removes the project and all its member grants. The project  │
+                               │                                              │  must be empty. Cannot be undone.                            │
+                               │                                              │                                                              │
+                               │                                              │   Delete                                         y / enter   │
+                               │                                              │   Cancel                                               esc   │
+                               │                                              ╰──────────────────────────────────────────────────────────────╯
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                                                                                               F2 mouse on  

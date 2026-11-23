@@ -1,0 +1,24 @@
+  Admin › Access › Robots › New robot                                                                                          signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  New robot                                                                                                           
+    Overview                   │                                                                                                                      
+                               │  Name         release-bot                                                                                            
+  ACCESS                       │  Scope       ( ) Repository  (*) Project                                                                             
+      Users                    │  Project      ▏                                                                                                      
+    ▸ Robots                   │              No projects yet. Create one in Admin › Access › Projects.                                               
+      Repository access        │                                                                                                                      
+      Projects                 │  Role        (*) Reader  ( ) Writer  ( ) Admin                                                                       
+                               │  Lifetime    ( ) 7 days  (*) 30 days  ( ) 90 days  ( ) 1 year  ( ) 2 years  ( ) Custom                               
+  SECURITY                     │              Expires Mon 21 Dec 2026 09:30 UTC (in 30 days)                                                          
+      Image scanning           │              A leaked token works until it expires or you revoke it. Pick the shortest lifetime CI can live with.    
+      Secret scanning          │                                                                                                                      
+      Signing policy           │                                                                                                                      
+                               │   Create robot  enter   Cancel  esc                                                                                  
+  OPERATIONS                   │                                                                                                                      
+      Scan runs                │                                                                                                                      
+      Secret findings          │                                                                                                                      
+      Update channel           │                                                                                                                      
+                               │                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ↑↓ pick project   ←→ scope, role, lifetime   enter create   esc cancel                                                             

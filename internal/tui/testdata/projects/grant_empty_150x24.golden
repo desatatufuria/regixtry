@@ -1,0 +1,24 @@
+  Admin › Access › Projects › odabank › Grant role                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Grant project role                                                                                 project odabank  
+    Overview                   │                                                                                                                      
+                               │  Member type    (*) User   ( ) Robot                                                                                 
+  ACCESS                       │  Member         type a name                                                                                          
+      Users                    │                 ▸ ana  user                                                                                          
+      Robots                   │                  bob  user                                                                                           
+      Repository access        │                  carol  user                                                                                         
+    ▸ Projects                 │                  dave  user                                                                                          
+                               │                  dana  user                                                                                          
+  SECURITY                     │                  +1 more                                                                                             
+      Image scanning           │  Project role  (*) Project reader  ( ) Project writer  ( ) Project admin                                             
+      Secret scanning          │                                                                                                                      
+      Signing policy           │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+                               │  │ Pick a member to see what changes.                                                                             │  
+  OPERATIONS                   │  │                                                                                                                │  
+      Scan runs                │  │                                                                                                                │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Update channel           │                                                                                                                      
+                               │   Grant role  enter   Cancel  esc                                                                                    
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ↑↓ pick member   ←→ type, role   enter grant   esc cancel                                                             F2 mouse on  

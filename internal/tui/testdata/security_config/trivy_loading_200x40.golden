@@ -8,6 +8,7 @@
       Users                    │                                                                                                                                                                        
       Robots                   │                                                                                                                                                                        
       Repository access        │                                                                                                                                                                        
+      Projects                 │                                                                                                                                                                        
                                │                                                                                                                                                                        
   SECURITY                     │                                                                                                                                                                        
     ▸ Image scanning           │                                                                                                                                                                        
@@ -18,7 +19,6 @@
       Scan runs                │                                                                                                                                                                        
       Secret findings          │                                                                                                                                                                        
       Update channel           │                                                                                                                                                                        
-                               │                                                                                                                                                                        
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        

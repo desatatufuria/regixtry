@@ -1,0 +1,60 @@
+  Admin › Access › Projects › odabank › Members                                                                                                                                                      signed in as operator  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │
+                               │  odabank
+    Overview                   │  project, created 2026-11-02, 3 repositories, 5 members
+                               │
+  ACCESS                       │
+      Users                    │
+      Robots                   │
+      Repository access        │
+    ▸ Projects                 │
+                               │
+  SECURITY                     │
+      Image scanning           │
+      Secret scanning          │
+      Signing policy           │
+                               │
+  OPERATIONS                   │
+      Scan runs                │
+      Secret findings          │
+      Update channel           │
+                               │                                              ╭──────────────────────────────────────────────────────────────╮
+                               │                                              │  Revoke Project writer?                                      │
+                               │                                              │                                                              │
+                               │                                              │  carol loses Writer access to every repository in odabank,   │
+                               │                                              │  unless an exact repository grant also gives it. It applies  │
+                               │                                              │  from the next request; no token is revoked.                 │
+                               │                                              │                                                              │
+                               │                                              │  ╭────────────────────────────────────────────────────────╮  │
+                               │                                              │  │ carol on project odabank                               │  │
+                               │                                              │  │ Project writer since 2026-11-10                        │  │
+                               │                                              │  ╰────────────────────────────────────────────────────────╯  │
+                               │                                              │                                                              │
+                               │                                              │  Grant a project role again to restore it.                   │
+                               │                                              │                                                              │
+                               │                                              │   Revoke                                         y / enter   │
+                               │                                              │   Cancel                                               esc   │
+                               │                                              ╰──────────────────────────────────────────────────────────────╯
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  y / enter confirm   esc cancel                                                                                                                                                                               F2 mouse on  

@@ -42,6 +42,7 @@ Sidebar groups, as `shellNavGroups` in `internal/tui/shell.go` defines them:
 | ACCESS | Users | [Users](#users) |
 | | Robots | [Robots and tokens](#robots-and-tokens) |
 | | Repository access | [Repository access](#repository-access) |
+| | Projects | [Projects](#projects) |
 | SECURITY | Image scanning | Trivy, [scanning screens](#image-secret-scanning-and-signing-policy) |
 | | Secret scanning | Gitleaks |
 | | Signing policy | Cosign signature policy |
@@ -68,7 +69,7 @@ Moving between sidebar items:
 | `F2` | switch the mouse on or off |
 | `c` / `v` | on a [one-time secret](#one-time-secrets) screen: `c` copies the whole secret to the clipboard, `v` shows it alone on its own row |
 
-- `q` per screen: Overview, Users, profile, Robots, Tokens, Repository access, Image/Secret scanning and Signing policy (and their repository lists), Scan runs, Secret findings, scan history, Update channel and the delegate screen quit on `q`, but not while a modal, editor, confirm, search or form is open. The login, New user, Reset password, New robot and **Grant access** screens never quit on `q`: it is typed into the focused field (Grant access filters hold focus from the start, and its footer shows no `q quit`).
+- `q` per screen: Overview, Users, profile, Robots, Tokens, Repository access, Projects and a project's members, Image/Secret scanning and Signing policy (and their repository lists), Scan runs, Secret findings, scan history, Update channel and the delegate screen quit on `q`, but not while a modal, editor, confirm, search or form is open. The login, New user, Reset password, New robot, **Grant access** and **Grant project role** screens never quit on `q`: it is typed into the focused field (Grant access filters hold focus from the start, and its footer shows no `q quit`).
 - Text inputs (login, search and filter boxes, create forms, grant filters, the signing key and identity fields) take every letter, including `j`, `k` and `q`. Use the arrows and `Tab` to leave the field; `Backspace` deletes.
 - Pasting works in text fields. A bracketed paste arrives as text, so pasted key names such as "enter" stay text and never trigger a command.
 - Footers are generated from each screen's own key bindings, so a hint cannot disagree with the key it names. The tables below list those hints.
@@ -82,7 +83,8 @@ On by default; `F2` toggles it and the footer shows `F2 mouse on` / `F2 mouse of
 - A second click on the selected row does what `Enter` does only when that is harmless: opening a profile, a tag list or an editor. It never opens a browser (scan history advisories) and never acts on data.
 - The mouse never confirms or cancels a dialog and never triggers a destructive action; deleting, revoking and disabling stay keys.
 - While a dialog, a form or a text input is in front, or a change is in flight, the mouse does nothing, the sidebar included.
-- The forms (New user, Reset password, New robot), the user profile and Grant access take no mouse input at all. The configuration screens and Update channel have no list, so the mouse only reaches their sidebar.
+- On the project screens a click selects a project or a member and a second click on a project opens its members; on a project's members a click on a repository moves the focus to that panel and a click on a member brings it back. The New project dialog, the delete and revoke confirms and the refusals take no mouse input.
+- The forms (New user, Reset password, New robot, Grant project role), the user profile and Grant access take no mouse input at all. The configuration screens and Update channel have no list, so the mouse only reaches their sidebar.
 
 ## Confirm dialog
 
@@ -140,7 +142,7 @@ Each panel loads on its own; one failing read shows an error inside its panel an
 | `r` | reload |
 | `Esc` | Overview |
 
-- **Profile** (`Users › name`): profile, tokens with time left, password and repository grants panels, and a danger area. `g` grant access, `t` tokens, `p` password, `d` or `Space` disable/enable, `r` refresh, `Esc` back. `Tab` moves the focus into the grants list (`↑↓` or `j`/`k` select, `Tab` leaves it); `x` revokes the selected grant after a confirmation. The dialog names the user, repository and role. A revoke applies from the user's next request (the grants are read per request); no token is revoked and the user's other grants are untouched. A global admin may revoke any grant, repository-admin grants included; the API's refusals are shown as they are and the list stays. The mouse does not act on this screen.
+- **Profile** (`Users › name`): profile, tokens with time left, password and access panels, and a danger area. `g` grant access, `t` tokens, `p` password, `d` or `Space` disable/enable, `r` refresh, `Esc` back. The access panel, `PROJECT ACCESS AND REPOSITORY GRANTS`, lists the user's project roles (shown as `odabank/*`, source `project`) first, then the exact repository grants (source `repo`); its `SOURCE` column header shows where the height allows. `Tab` moves the focus into the list (`↑↓` or `j`/`k` select, `Tab` leaves it); `x` revokes the selected row after a confirmation. On a repository grant the dialog names the user, repository and role; on a project role it is the same dialog the project's Members screen shows (`Revoke Project writer?`), and it removes the project grant only: the user's exact repository grants stay, even inside that project. If the project roles cannot be read the repository grants still show, with a note. A revoke applies from the user's next request (the grants are read per request); no token is revoked and the user's other grants are untouched. A global admin may revoke any grant, repository-admin grants included; the API's refusals are shown as they are and the list stays. The mouse does not act on this screen.
 - **New user** (`Tab`/`↑`/`↓` fields, `←`/`→` role, `Space` toggles the role and `Enabled`, `Enter` creates, `Esc` cancels): username, masked password (at least 8 characters and not on the built-in list of common passwords, which the server refuses with `422`), role `admin`, `read-only` or `user`. A read-only user pulls from every repository without a grant and has no admin access. The flag is set at creation.
 - **Reset password** (two masked fields, `Enter` saves, `Esc` cancels): the password is never shown or logged.
 
@@ -162,7 +164,7 @@ Each panel loads on its own; one failing read shows an error inside its panel an
 
 `x` deletes on this screen. Everywhere else it revokes. A robot's single grant cannot be revoked from here: `x` would be ambiguous; revoke it from [Repository access](#repository-access).
 
-**New robot** collects name, repository (type to filter, `↑`/`↓` pick a suggestion), role (`←`/`→`: Reader, Writer, Admin) and a [lifetime](#token-lifetime), then shows the robot's token secret once.
+**New robot** collects name, scope, repository (type to filter, `↑`/`↓` pick a suggestion), role (`←`/`→`: Reader, Writer, Admin) and a [lifetime](#token-lifetime), then shows the robot's token secret once. The **Scope** field (`←`/`→`) is `Repository` (the default) or `Project`; the two are exclusive, because a robot holds one grant. With scope `Project` the repository field becomes a **Project** picker (`odabank  3 repositories`, read from `GET projects` when the scope first becomes Project), the robot covers every repository of that project, pushed now or later, and **Admin** is struck out: robots on a project are readers or writers only, `Enter` is refused and nothing is sent. A project that is not in the list is refused with `Project <name> does not exist. Pick one from the list.`. A project robot appears in Robots as `odabank/*`.
 
 **Tokens** (`Users › name › Tokens`, or `Robots › name › Tokens`): each token as a card with a bar for the time left out of its full lifetime.
 
@@ -203,6 +205,50 @@ Create Token and New robot share one **Lifetime** selector. It starts on 30 days
 - A warning reminds you that a leaked token stays valid until it expires or you revoke it.
 
 The API accepts the same format as `ttl` ([API reference](api.md)).
+
+## Projects
+
+A project is the first path segment of a repository name (`odabank/api` belongs to `odabank`). `Admin › Access › Projects` creates and deletes projects and gives users and robots a role on a whole project. The server decides what each session may do: creating, listing and deleting projects is for global administrators; a project administrator can list and change the members of their own project. The endpoints are in the [API reference](api.md).
+
+### Projects list
+
+`Admin › Access › Projects`: project, repositories, tags and last push (`never` when nothing was pushed); the title says how many projects and the sort. The member count is not shown: the list endpoint does not return it.
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` / `j` `k` | move |
+| `Enter` | open the project's members |
+| `n` | New project dialog |
+| `d` | delete the selected project: a confirm when it is empty, a refusal when it holds repositories |
+| `s` | sort: name, last push (newest first), repositories (most first); the active column shows `▲`/`▼` |
+| `r` | retry, only after a failed read |
+| `Esc` | Overview |
+
+Hints appear only when the action applies: an empty list shows only `n new project`; a session that is not a global administrator gets `Only global administrators manage projects.` and `esc back`.
+
+- **New project** (`n`): type the name; `Enter` creates, `Esc` cancels. The name is checked as you type: one lowercase segment (letters, digits, `.` `_` `-`; start and end with a letter or digit), at most 64 characters, no slash, not reserved (`blobs`, `manifests`, `tags`, `referrers`, `grants`, `repository-overrides`). The first failing rule is shown, and `Create project` stays disabled until the name is valid. The server has the last word: an existing name keeps the dialog open with `Project <name> already exists.`, other failures show `Could not create project: <reason>.`. The rules are the server's own (`ParseProjectName`); a test pins that the dialog and the server accept the same names.
+- **Delete project** (`d`): an empty project opens a confirm that names it with its counts and says the project is removed together with its member grants and cannot be undone; `y` or `Enter` deletes. A project that holds repositories opens a refusal (`Cannot delete project`, `project "odabank" still has 3 repositories; delete or finish them first`) and sends nothing; delete the repositories in Console first. A server without `-delete-enabled` answers the delete with `422`, shown as `Deletion is disabled`. If the project got a repository meanwhile the answer is `409`: `Project <name> is no longer empty. Nothing was deleted.`. A delete that removed the project but could not purge its grants (`503`) shows the server's message and reloads the list, where the project is already gone; the leftover grants are purged when that name is created again, or by repeating the `DELETE` through the API. A dialog keeps the project it was opened for even if the list reloads behind it.
+
+### Project members
+
+`Enter` on a project: `Admin › Access › Projects › odabank › Members`. The left panel lists the users and robots that hold a project role (member, type, project role `Project reader`, `Project writer` or `Project admin`, since), by name. The right panel lists the project's repositories, read-only, taken from the catalog the TUI already has (exact first path segment, so `odabank2/web` is not in `odabank`).
+
+| Key | Action |
+| --- | --- |
+| `Tab` | move the focus between the members and the repositories |
+| `↑` `↓` / `j` `k` | move in the focused panel |
+| `g` | Grant project role; on a selected member it opens on that member to change the role |
+| `x` | revoke the selected member's project role, after a confirm |
+| `r` | retry, only after a failed read |
+| `Esc` | back to Projects |
+
+A project role covers every repository of the project, now and later; an exact repository grant can only add access. `x` opens `Revoke Project writer?` with the member and project and the consequence: the member loses that access unless an exact repository grant also gives it; it applies from the next request (the grants are read per request) and no token is revoked. The API's refusals are shown as they are; a project administrator who tries to revoke another project administrator sees `Only a global administrator can revoke a project admin.`. A stale read cannot bring a revoked member back, and a revoke of a member that is already gone says so and refreshes. A project administrator who is not a global administrator can open the members of their own project; the project record (creation date) is global-only, so the subtitle then omits it.
+
+### Grant project role
+
+`g` on the members opens `Admin › Access › Projects › odabank › Grant role`: **Member type** (`User` or `Robot`, `←`/`→`), **Member** (type to filter, `↑`/`↓` pick, `Enter` accepts) and **Project role** (`←`/`→`). A box says what changes (`dave becomes Project reader of odabank`). `Enter` grants, `Esc` cancels, and nothing else leaves the form while the grant is in flight. Robots can be `Project reader` or `Project writer` only: with Robot and `Project admin` the form says so, shows the role struck out and sends nothing (the API refuses it too). The API's other answers are shown on the form, which stays open: a project administrator granting admin, a read-only user given write access, an unknown member, a robot that already holds a grant (`<robot> already has a grant. A robot holds one grant: remove it first.`). A session that cannot list users and robots (a project administrator) types the exact username. After a grant the members screen opens again with the outcome.
+
+`Console › Projects` stays the local, derived view of the catalog and is not access controlled (see [Security](security.md)); it is not backed by the projects above, so a project created here appears there only once a repository is pushed into it.
 
 ## Grant repository access
 
@@ -374,6 +420,10 @@ All under `/admin/v1`, details in the [API reference](api.md).
 | Overview | `GET admin-tokens/expiring`, `GET access-events`, `GET robots`, `GET repository-scan-summaries` |
 | Users, tokens | `GET users`, `admin-tokens/expiring`, user and token endpoints; `ttl` on create |
 | Repository access | `GET repository-grants` (paged) |
+| Projects | `GET projects`, `POST projects`, `DELETE projects/{project}` |
+| Project members | `GET projects/{project}` (global admin only, optional), `GET projects/{project}/members` (paged), `PUT` and `DELETE projects/{project}/members/{username}`, `GET users`, `GET robots` |
+| Edit user (project roles) | `GET users/{id}/project-grants`, `DELETE projects/{project}/members/{username}` |
+| New robot (project scope) | `GET projects`, `POST robots` with `project` |
 | Grant access | `GET users`, `GET robots`, `GET` and `PUT users/{id}/grants/{repository}` |
 | Delegate | `repositories/{repo}/grants` |
 | Security, Operations | `features/...`, `scan-runs`, `signing-policy`, `update-channel` |

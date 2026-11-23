@@ -8,17 +8,17 @@
       Users                    │  │   organisat…  9c41e0…e0d2  completed  —          —          1     1    │  │ RESULT                             │  
       Robots                   │  │   organisat…  9c41e0…e0d2  completed  —          —          2     2    │  │ Digest            sha256:9c41…e0d2 │  
       Repository access        │  │   organisat…  9c41e0…e0d2  completed  —          —          3     3    │  │ Finished          14 Mar 08:30 UTC │  
-                               │  │   organisat…  9c41e0…e0d2  completed  —          —          0     4    │  │ Trivy                       0.58.1 │  
-  SECURITY                     │  │   organisat…  9c41e0…e0d2  completed  —          —          1     5    │  │ Trivy DB                         — │  
-      Image scanning           │  │   organisat…  9c41e0…e0d2  completed  —          —          2     6    │  │ Checked                          — │  
-      Secret scanning          │  │   organisat…  9c41e0…e0d2  completed  —          —          3     0    │  │ FINDINGS                           │  
-      Signing policy           │  │   organisat…  9c41e0…e0d2  completed  —          —          0     1    │  │ Critical                         0 │  
-                               │  │   organisat…  9c41e0…e0d2  completed  —          —          1     2    │  │ High                             0 │  
-  OPERATIONS                   │  │   organisat…  9c41e0…e0d2  completed  —          —          2     3    │  │ Medium                          11 │  
-    ▸ Scan runs                │  │   organisat…  9c41e0…e0d2  completed  —          —          3     4    │  │ Low                              7 │  
-      Secret findings          │  │   organisat…  9c41e0…e0d2  completed  —          —          0     5    │  │ ACTIONS                            │  
-      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │  
-                               │  One row per image digest, its latest result. Rescans only when the          │ Refresh                          r │  
+      Projects                 │  │   organisat…  9c41e0…e0d2  completed  —          —          0     4    │  │ Trivy                       0.58.1 │  
+                               │  │   organisat…  9c41e0…e0d2  completed  —          —          1     5    │  │ Trivy DB                         — │  
+  SECURITY                     │  │   organisat…  9c41e0…e0d2  completed  —          —          2     6    │  │ Checked                          — │  
+      Image scanning           │  │   organisat…  9c41e0…e0d2  completed  —          —          3     0    │  │ FINDINGS                           │  
+      Secret scanning          │  │   organisat…  9c41e0…e0d2  completed  —          —          0     1    │  │ Critical                         0 │  
+      Signing policy           │  │   organisat…  9c41e0…e0d2  completed  —          —          1     2    │  │ High                             0 │  
+                               │  │   organisat…  9c41e0…e0d2  completed  —          —          2     3    │  │ Medium                          11 │  
+  OPERATIONS                   │  │   organisat…  9c41e0…e0d2  completed  —          —          3     4    │  │ Low                              7 │  
+    ▸ Scan runs                │  │   organisat…  9c41e0…e0d2  completed  —          —          0     5    │  │ ACTIONS                            │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  │ Scan history                 enter │  
+      Update channel           │  One row per image digest, its latest result. Rescans only when the          │ Refresh                          r │  
                                │  vulnerability DB or scan settings change. enter opens its scan history.     ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter scan history   r refresh   esc back   q quit                                                                           F2 mouse on  

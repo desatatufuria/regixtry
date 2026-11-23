@@ -18,7 +18,7 @@ import (
 func startRobotCreate(t *testing.T, m Model) (Model, tea.Cmd) {
 	t.Helper()
 	m = overviewPress(t, m, testKeyRunes("r"))
-	m = overviewPress(t, m, testKeyRunes("late-bot"), testKeyTab(), testKeyRunes("team/api"), testKeyEnter())
+	m = overviewPress(t, m, testKeyRunes("late-bot"), testKeyTab(), testKeyTab(), testKeyRunes("team/api"), testKeyEnter())
 	updated, cmd := m.Update(testKeyEnter())
 	if cmd == nil {
 		t.Fatal("Enter did not start the creation")

@@ -8,17 +8,17 @@
       Users                    │  ███████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ Lifetime                                     │  
     ▸ Robots                   │  act_9c41…e0d2                                                                   issued 28 Oct, expires 27 Nov 2026  │ ( ) 7 days  (*) 30 days  ( ) 90 days         │  
       Repository access        │                                                                                                                      │ ( ) 1 year  ( ) 2 years  ( ) Custom          │  
-                               │    staging-deploy                                                                                      18 days left  │                                              │  
-  SECURITY                     │  ████████████████████████████████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ EXPIRES                                      │  
-      Image scanning           │  act_17ab…3f2a                                                                     issued 9 Nov, expires 9 Dec 2026  │ Mon 21 Dec 2026 09:30 UTC                    │  
-      Secret scanning          │                                                                                                                      │ 30 days from today                           │  
-      Signing policy           │    old-deploy                                                                                               expired  │                                              │  
-                               │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ A leaked token stays valid until it expires  │  
-  OPERATIONS                   │  act_55f0…b81c                                                                                   expired 2 Nov 2026  │ or you revoke it. Shorter for people, longer │  
-      Scan runs                │                                                                                                                      │ only for CI robots.                          │  
-      Secret findings          │                                                                                                                      │ The secret is shown once, right after        │  
-      Update channel           │                                                                                                                      │ creation. Copy it before leaving.            │  
-                               │                                                                                                                      │                                              │  
+      Projects                 │    staging-deploy                                                                                      18 days left  │                                              │  
+                               │  ████████████████████████████████████████████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ EXPIRES                                      │  
+  SECURITY                     │  act_17ab…3f2a                                                                     issued 9 Nov, expires 9 Dec 2026  │ Mon 21 Dec 2026 09:30 UTC                    │  
+      Image scanning           │                                                                                                                      │ 30 days from today                           │  
+      Secret scanning          │    old-deploy                                                                                               expired  │                                              │  
+      Signing policy           │  ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │ A leaked token stays valid until it expires  │  
+                               │  act_55f0…b81c                                                                                   expired 2 Nov 2026  │ or you revoke it. Shorter for people, longer │  
+  OPERATIONS                   │                                                                                                                      │ only for CI robots.                          │  
+      Scan runs                │                                                                                                                      │ The secret is shown once, right after        │  
+      Secret findings          │                                                                                                                      │ creation. Copy it before leaving.            │  
+      Update channel           │                                                                                                                      │                                              │  
                                │                                                                                                                      │  Create token  enter   Cancel  esc           │  
                                │                                                                                                                      │                                              │  
                                │                                                                                                                      │                                              │  

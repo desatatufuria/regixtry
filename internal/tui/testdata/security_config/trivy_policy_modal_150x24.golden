@@ -8,17 +8,17 @@
       Users                    │  │ TRIVY CONFI  │  Vulnerability policy                            │  │ SCAN POLICY                               │
       Robots                   │  │ Scheduled s  │  A scan that reaches the threshold blocks the    │  │ Policy                        [x] enabled │
       Repository access        │  │ Interval     │  pull. Applies to every repository without an    │  │ Severity threshold          CRITICAL+HIGH │
-                               │  │ Timeout      │  override.                                       │  │ A scan that reaches the threshold blocks  │
-  SECURITY                     │  │ Max concurr  │  [x] Policy enabled                              │  │ the pull. p edit policy.                  │
-    ▸ Image scanning           │  │ Registry re  │  Severity threshold                              │  │ Last saved 2 Nov 2026 10:14 UTC.          │
-      Secret scanning          │  │ c edit conf  │   CRITICAL+HIGH                                  │  │                                           │
-      Signing policy           │  ╰────────────  │                                                  │  ╰───────────────────────────────────────────╯
-                               │  ╭────────────  │   Save  enter   Cancel  esc                      │  ────────────────────────────────────────────╮
-  OPERATIONS                   │  │ PER-REPOSIT  │  tab next field, space toggles or cycles         │                                              │
-      Scan runs                │  │ REPOSITORY   ╰──────────────────────────────────────────────────╯   ENABLED  DETAIL                UPDATED     │
-      Secret findings          │  │ team/api                                                 override   yes      ignore file set       14 Nov      │
-      Update channel           │  │ team/docs                                                override   no       scanning off          2 Nov       │
-                               │  │ +2 more, o opens the list                                                                                      │
+      Projects                 │  │ Timeout      │  override.                                       │  │ A scan that reaches the threshold blocks  │
+                               │  │ Max concurr  │  [x] Policy enabled                              │  │ the pull. p edit policy.                  │
+  SECURITY                     │  │ Registry re  │  Severity threshold                              │  │ Last saved 2 Nov 2026 10:14 UTC.          │
+    ▸ Image scanning           │  │ c edit conf  │   CRITICAL+HIGH                                  │  │                                           │
+      Secret scanning          │  ╰────────────  │                                                  │  ╰───────────────────────────────────────────╯
+      Signing policy           │  ╭────────────  │   Save  enter   Cancel  esc                      │  ────────────────────────────────────────────╮
+                               │  │ PER-REPOSIT  │  tab next field, space toggles or cycles         │                                              │
+  OPERATIONS                   │  │ REPOSITORY   ╰──────────────────────────────────────────────────╯   ENABLED  DETAIL                UPDATED     │
+      Scan runs                │  │ team/api                                                 override   yes      ignore file set       14 Nov      │
+      Secret findings          │  │ team/docs                                                override   no       scanning off          2 Nov       │
+      Update channel           │  │ +2 more, o opens the list                                                                                      │
                                │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   space toggle   enter save   esc cancel                                                                                F2 mouse on  

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -21,8 +22,18 @@ type createRobotScreen struct {
 
 	name       string
 	repository string
-	// suggestion indexes the repository suggestion rows; only the arrows move
-	// it, because j, k and q are typed text in the fields.
+	// scope is where the robot's one grant lies: on a repository (the default)
+	// or on a whole project. The two are mutually exclusive: the robot is
+	// created with one or the other.
+	scope robotScope
+	// project is the typed or picked project of scope Project; projects are
+	// read when the scope first becomes Project.
+	project      string
+	projects     []ports.ProjectSummary
+	projectsRead projectsRead
+	projectsErr  string
+	// suggestion indexes the repository (or project) suggestion rows; only the
+	// arrows move it, because j, k and q are typed text in the fields.
 	suggestion int
 	role       domainauth.RepoRole
 	lifetime   tokenLifetime
@@ -42,10 +53,28 @@ type createRobotScreen struct {
 	reveal, copied bool
 }
 
+// robotScope is the scope of a new robot's grant.
+type robotScope int
+
+const (
+	robotScopeRepository robotScope = iota
+	robotScopeProject
+)
+
+// projectsRead is how far the project list read has got.
+type projectsRead int
+
+const (
+	projectsNotRead projectsRead = iota
+	projectsReading
+	projectsRead_
+)
+
 type robotField int
 
 const (
 	robotFieldName robotField = iota
+	robotFieldScope
 	robotFieldRepository
 	robotFieldRole
 	robotFieldLifetime
@@ -57,10 +86,12 @@ type createdRobot struct {
 	id         string
 	name       string
 	repository string
-	role       domainauth.RepoRole
-	accessor   string
-	secret     string
-	expires    time.Time
+	// project is set instead of repository for a robot on a whole project.
+	project  string
+	role     domainauth.RepoRole
+	accessor string
+	secret   string
+	expires  time.Time
 }
 
 func newCreateRobotScreen() createRobotScreen {
@@ -75,7 +106,17 @@ func (s createRobotScreen) Keys() screenKeys {
 	if s.done {
 		return secretFooterKeys
 	}
-	return createRobotKeys
+	pick := "pick repository"
+	if s.scope == robotScopeProject {
+		pick = "pick project"
+	}
+	return screenKeys{short: []key.Binding{
+		key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", pick)),
+		key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←→", "scope, role, lifetime")),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "create")),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}}
 }
 
 func (s createRobotScreen) Init(screenEnv) tea.Cmd { return nil }
@@ -101,14 +142,80 @@ func (s createRobotScreen) Update(env screenEnv, msg tea.Msg) (adminScreen, tea.
 		}
 		next, cmd := s.applyCreated(typed)
 		return next, cmd, false
+	case createRobotProjectsMsg:
+		if typed.gen != s.gen {
+			return s, nil, false
+		}
+		s.projectsRead = projectsRead_
+		s.projects, s.projectsErr = typed.projects, ""
+		if typed.err != nil {
+			s.projects, s.projectsErr = nil, strings.TrimRight(adminErrorDetail(typed.err), ".")
+		}
+		return s, nil, false
 	}
 	return s, nil, false
+}
+
+// createRobotProjectsMsg is the project list the Project scope picks from.
+type createRobotProjectsMsg struct {
+	gen      uint64
+	projects []ports.ProjectSummary
+	err      error
+}
+
+func (createRobotProjectsMsg) projectScreenMsg()               {}
+func (createRobotProjectsMsg) accessSlot() screenSlot          { return slotCreateRobot }
+func (m createRobotProjectsMsg) accessGen() uint64             { return m.gen }
+func (m createRobotProjectsMsg) expiredReason() (string, bool) { return expiredReasonOf(m.err) }
+
+func createRobotProjectsCmd(env screenEnv, gen uint64) tea.Cmd {
+	client, session := env.Client, env.Session
+	return func() tea.Msg {
+		if client == nil {
+			return createRobotProjectsMsg{gen: gen, err: errAdminUnavailable}
+		}
+		projects, err := client.ListProjects(context.Background(), session)
+		return createRobotProjectsMsg{gen: gen, projects: projects, err: err}
+	}
+}
+
+// projectRows are the projects the Project scope suggests: those whose name
+// contains what was typed.
+func (s createRobotScreen) projectRows() []ports.ProjectSummary {
+	needle := strings.ToLower(strings.TrimSpace(s.project))
+	var rows []ports.ProjectSummary
+	for _, project := range s.projects {
+		if needle == "" || strings.Contains(strings.ToLower(project.Name), needle) {
+			rows = append(rows, project)
+		}
+	}
+	return rows
+}
+
+// rowCount is how many suggestion rows the current scope shows.
+func (s createRobotScreen) rowCount(repositories []grantRepoRow) int {
+	if s.scope == robotScopeProject {
+		return len(s.projectRows())
+	}
+	return len(repositories)
+}
+
+// projectAdminRefused is the one scope and role the form refuses itself.
+func (s createRobotScreen) projectAdminRefused() bool {
+	return s.scope == robotScopeProject && s.role == domainauth.RepoRoleAdmin
 }
 
 func (s createRobotScreen) applyCreated(msg robotCreatedMsg) (createRobotScreen, tea.Cmd) {
 	s.creating = false
 	if msg.err != nil {
 		s.err = msg.err.Error()
+		if msg.input.Project != "" {
+			if IsAdminNotFound(msg.err) {
+				s.err = unknownProjectText(msg.input.Project)
+			} else {
+				s.err = fmt.Sprintf("Could not create robot: %s.", strings.TrimRight(adminErrorDetail(msg.err), "."))
+			}
+		}
 		return s, nil
 	}
 	s.done, s.err = true, ""
@@ -164,7 +271,28 @@ func (s createRobotScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 	switch s.focus {
 	case robotFieldName:
 		s.name = typeInto(s.name, msg, true)
+	case robotFieldScope:
+		switch {
+		case isMoveLeftKey(msg):
+			return s.withScope(env, robotScopeRepository)
+		case isMoveRightKey(msg):
+			return s.withScope(env, robotScopeProject)
+		}
 	case robotFieldRepository:
+		if s.scope == robotScopeProject {
+			count := len(s.projectRows())
+			switch {
+			case isArrowUpKey(msg):
+				s.suggestion = boundedIndex(boundedIndex(s.suggestion, count)-1, count)
+			case isArrowDownKey(msg):
+				s.suggestion = boundedIndex(boundedIndex(s.suggestion, count)+1, count)
+			default:
+				if typed := typeInto(s.project, msg, false); typed != s.project {
+					s.project, s.suggestion, s.err = typed, 0, ""
+				}
+			}
+			break
+		}
 		switch {
 		case isArrowUpKey(msg):
 			s.suggestion = boundedIndex(boundedIndex(s.suggestion, len(rows))-1, len(rows))
@@ -191,6 +319,20 @@ func (s createRobotScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 	return s, nil, true
 }
 
+// withScope switches the robot between a repository and a project. The
+// projects are read the first time the scope becomes Project.
+func (s createRobotScreen) withScope(env screenEnv, scope robotScope) (adminScreen, tea.Cmd, bool) {
+	if s.scope == scope {
+		return s, nil, true
+	}
+	s.scope, s.suggestion, s.err = scope, 0, ""
+	if scope == robotScopeProject && s.projectsRead == projectsNotRead {
+		s.projectsRead = projectsReading
+		return s, createRobotProjectsCmd(env, s.gen), true
+	}
+	return s, nil, true
+}
+
 // typeInto applies a typed or pasted character, or Backspace, to a field.
 func typeInto(value string, msg keyMsg, spaces bool) string {
 	switch {
@@ -213,9 +355,12 @@ func preferredSuggestion(known []string, typed string) int {
 	return 0
 }
 
-// enter accepts the highlighted suggestion while the Repository field has
-// focus; anywhere else it creates the robot.
+// enter accepts the highlighted suggestion while the Repository (or Project)
+// field has focus; anywhere else it creates the robot.
 func (s createRobotScreen) enter(env screenEnv, rows []grantRepoRow) (adminScreen, tea.Cmd, bool) {
+	if s.scope == robotScopeProject {
+		return s.enterProject(env)
+	}
 	if s.focus == robotFieldRepository {
 		if len(rows) > 0 {
 			s.repository = rows[boundedIndex(s.suggestion, len(rows))].Name
@@ -242,6 +387,54 @@ func (s createRobotScreen) enter(env screenEnv, rows []grantRepoRow) (adminScree
 	return s, createRobotCmd(env, s.gen, input), true
 }
 
+// enterProject is enter for scope Project. Admin is refused here (robots on a
+// project are readers or writers) and nothing is sent; a project that is not
+// in the list read is refused with the board's text before any request.
+func (s createRobotScreen) enterProject(env screenEnv) (adminScreen, tea.Cmd, bool) {
+	if s.focus == robotFieldRepository {
+		if rows := s.projectRows(); len(rows) > 0 {
+			s.project = rows[boundedIndex(s.suggestion, len(rows))].Name
+		}
+		if strings.TrimSpace(s.project) == "" {
+			s.err = "Project is required."
+			return s, nil, true
+		}
+		s.focus, s.suggestion, s.err = robotFieldRole, 0, ""
+		return s, nil, true
+	}
+	name, project := strings.TrimSpace(s.name), strings.TrimSpace(s.project)
+	switch {
+	case name == "" || project == "":
+		s.err = "Name and project are required."
+		return s, nil, true
+	case s.projectAdminRefused():
+		return s, nil, true
+	case s.projectsRead == projectsRead_ && s.projectsErr == "" && !s.hasProject(project):
+		s.err = unknownProjectText(project)
+		return s, nil, true
+	}
+	ttl, ok := s.lifetime.duration(lifetimeCeiling())
+	if !ok {
+		return s, nil, true
+	}
+	s.creating, s.err = true, ""
+	input := ports.AdminCreateRobotInput{Name: name, Project: project, Role: s.role, TTL: ttl}
+	return s, createRobotCmd(env, s.gen, input), true
+}
+
+func (s createRobotScreen) hasProject(name string) bool {
+	for _, project := range s.projects {
+		if project.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func unknownProjectText(project string) string {
+	return fmt.Sprintf("Project %s does not exist. Pick one from the list.", project)
+}
+
 func createRobotCmd(env screenEnv, gen uint64, input ports.AdminCreateRobotInput) tea.Cmd {
 	client, session := env.Client, env.Session
 	return func() tea.Msg {
@@ -253,14 +446,6 @@ func createRobotCmd(env screenEnv, gen uint64, input ports.AdminCreateRobotInput
 	}
 }
 
-var createRobotKeys = screenKeys{short: []key.Binding{
-	key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-	key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑↓", "pick repository")),
-	key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←→", "role, lifetime")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "create")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-}}
-
 // createdRobotFrom is what the secret state shows for a created robot.
 func createdRobotFrom(msg robotCreatedMsg) createdRobot {
 	robot := msg.created.Robot
@@ -268,6 +453,7 @@ func createdRobotFrom(msg robotCreatedMsg) createdRobot {
 		id:         robot.ID,
 		name:       firstText(robot.Username, msg.input.Name),
 		repository: firstText(robot.Repository, msg.input.Repository),
+		project:    firstText(robot.Project, msg.input.Project),
 		role:       robot.Role,
 		accessor:   msg.created.Accessor,
 		secret:     msg.created.Secret,

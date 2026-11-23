@@ -2920,6 +2920,9 @@ type fakeAdminClient struct {
 	grants    map[string][]ports.AdminRepoGrant
 	grantsErr error
 
+	// projectsAPI backs the project methods (admin_client_projects_fake_test.go).
+	projectsAPI fakeProjectsAPI
+
 	tokens    map[string][]ports.AdminToken
 	tokensErr error
 

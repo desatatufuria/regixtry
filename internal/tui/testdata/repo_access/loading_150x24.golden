@@ -8,6 +8,7 @@
       Users                    │  │   REPOSITORY                    PRINCIPAL         ROLE     SINCE       │  │                                    │  
       Robots                   │  │ Reading grants… 0 loaded                                               │  │                                    │  
     ▸ Repository access        │  │                                                                        │  │                                    │  
+      Projects                 │  │                                                                        │  │                                    │  
                                │  │                                                                        │  │                                    │  
   SECURITY                     │  │                                                                        │  │                                    │  
       Image scanning           │  │                                                                        │  │                                    │  
@@ -17,8 +18,7 @@
   OPERATIONS                   │  │                                                                        │  │                                    │  
       Scan runs                │  │                                                                        │  │                                    │  
       Secret findings          │  │                                                                        │  │                                    │  
-      Update channel           │  │                                                                        │  │                                    │  
-                               │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
+      Update channel           │  ╰────────────────────────────────────────────────────────────────────────╯  │                                    │  
                                │  Roles: Reader pulls, Writer pushes, Admin manages access.                   ╰────────────────────────────────────╯  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   ↑↓ move   enter open   / search   g grant access   x revoke   esc back   q quit                                                        F2 mouse on  

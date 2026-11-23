@@ -8,7 +8,8 @@
     ▸ Users                    │  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  │                                    │  
       Robots                   │  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │                                    │  
       Repository access        │  │   USERNAME                                                                                 ROLE       STATE     EXPIRING │  │                                    │  
-                               │  │ No users yet. Press n to create one.                                                                                     │  │                                    │  
+      Projects                 │  │ No users yet. Press n to create one.                                                                                     │  │                                    │  
+                               │  │                                                                                                                          │  │                                    │  
   SECURITY                     │  │                                                                                                                          │  │                                    │  
       Image scanning           │  │                                                                                                                          │  │                                    │  
       Secret scanning          │  │                                                                                                                          │  │                                    │  
@@ -18,7 +19,6 @@
       Scan runs                │  │                                                                                                                          │  │                                    │  
       Secret findings          │  │                                                                                                                          │  │                                    │  
       Update channel           │  │                                                                                                                          │  │                                    │  
-                               │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  
                                │  │                                                                                                                          │  │                                    │  

@@ -8,17 +8,17 @@
     ▸ Users                    │  │ Username                                                         │  │ RULES                                    │  
       Robots                   │  │  grace                                                           │  │ ✓ Username: letters, numbers, dot, dash  │  
       Repository access        │  │ Password                                                         │  │   and underscore; starts and ends with a │  
-                               │  │  •••••••••••••▏                                                  │  │   letter or number; capitals are         │  
-  SECURITY                     │  │ ✓ 13 characters                                                  │  │   lowercased                             │  
-      Image scanning           │  │                                                                  │  │ ✓ Password: at least 8 characters        │  
-      Secret scanning          │  │ Role                                                             │  │ The password is masked while you type    │  
-      Signing policy           │  │  admin   ✓ read-only   user                                      │  │ and is never shown again, here or after  │  
-                               │  │                                                                  │  │ saving.                                  │  
-  OPERATIONS                   │  │ [x] Enabled (space toggles; a disabled user cannot sign in)      │  │                                          │  
-      Scan runs                │  │                                                                  │  │ ROLES                                    │  
-      Secret findings          │  │  Create user  enter   Cancel  esc                                │  │ admin manages users, robots and grants   │  
-      Update channel           │  │                                                                  │  │ user pulls and pushes where granted      │  
-                               │  │                                                                  │  │ read-only pulls where granted, never     │  
+      Projects                 │  │  •••••••••••••▏                                                  │  │   letter or number; capitals are         │  
+                               │  │ ✓ 13 characters                                                  │  │   lowercased                             │  
+  SECURITY                     │  │                                                                  │  │ ✓ Password: at least 8 characters        │  
+      Image scanning           │  │ Role                                                             │  │ The password is masked while you type    │  
+      Secret scanning          │  │  admin   ✓ read-only   user                                      │  │ and is never shown again, here or after  │  
+      Signing policy           │  │                                                                  │  │ saving.                                  │  
+                               │  │ [x] Enabled (space toggles; a disabled user cannot sign in)      │  │                                          │  
+  OPERATIONS                   │  │                                                                  │  │ ROLES                                    │  
+      Scan runs                │  │  Create user  enter   Cancel  esc                                │  │ admin manages users, robots and grants   │  
+      Secret findings          │  │                                                                  │  │ user pulls and pushes where granted      │  
+      Update channel           │  │                                                                  │  │ read-only pulls where granted, never     │  
                                │  ╰──────────────────────────────────────────────────────────────────╯  │ pushes                                   │  
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   tab next field   ←→ role   space toggle   enter create   esc cancel                                                                                 

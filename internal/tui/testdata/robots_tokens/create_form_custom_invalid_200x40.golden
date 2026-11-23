@@ -4,10 +4,11 @@
                                │  New robot                                                                                                                                                             
     Overview                   │                                                                                                                                                                        
                                │  Name         e.g. ci-publisher                                                                                                                                        
-  ACCESS                       │  Repository   e.g. team/api                                                                                                                                            
-      Users                    │               ▸ team/app-1                                                                                                                                             
-    ▸ Robots                   │                 team/app-2                                                                                                                                             
-      Repository access        │                 team/app-3                                                                                                                                             
+  ACCESS                       │  Scope       (*) Repository  ( ) Project                                                                                                                               
+      Users                    │  Repository   e.g. team/api                                                                                                                                            
+    ▸ Robots                   │               ▸ team/app-1                                                                                                                                             
+      Repository access        │                 team/app-2                                                                                                                                             
+      Projects                 │                 team/app-3                                                                                                                                             
                                │                 team/app-4                                                                                                                                             
   SECURITY                     │                 team/app-5                                                                                                                                             
       Image scanning           │                 +2 more                                                                                                                                                
@@ -35,6 +36,5 @@
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        
                                │                                                                                                                                                                        
-                               │                                                                                                                                                                        
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  tab next field   ↑↓ pick repository   ←→ role, lifetime   enter create   esc cancel                                                                                                                   
+  tab next field   ↑↓ pick repository   ←→ scope, role, lifetime   enter create   esc cancel                                                                                                            
