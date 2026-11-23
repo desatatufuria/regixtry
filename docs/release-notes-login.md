@@ -29,7 +29,7 @@ Wave 2 (observability):
 
 ## Behavior changes
 
-- Setting a password that is too common or shorter than 8 characters is refused with `422` (previously accepted unless it was shorter than the old minimum).
+- Setting a password that is too common is refused with `422`; the minimum length is 8 characters after trimming.
 - Password logins can answer `429` under load (bcrypt limit) and, only in `enforce` mode, during a backoff. Clients that retry should honor `Retry-After`.
 - The failure log line now carries `ip=`; the account is `account=<name>` or `account_hash=<8 hex>`.
 - Startup refuses `-trusted-proxies` with a `/0` range or an invalid entry, an unknown `-login-backoff-mode`, and an invalid threshold, base or max.
@@ -40,7 +40,7 @@ Wave 2 (observability):
 1. Back up the Postgres auth database (for example `pg_dump --format=custom "$DSN" > auth.dump`).
 2. If you are behind nginx, Traefik or Caddy, decide the `-trusted-proxies` value now (the proxy's address, never `/0`); see [operations.md](operations.md#trusted-proxies-making-the-ip-real). For the nginx host in the verified setup the value is that host's address (it appends the real client to `X-Forwarded-For`).
 3. Make sure scripts that set passwords (provisioning, `bootstrap-admin`) do not use a common password.
-4. Give robots credential tokens rather than passwords; password logins from automation are what the backoff and the limiter affect.
+4. Let automation use credential tokens, not a human account's password: password logins are what the backoff and the bcrypt limiter affect.
 5. Keep at least one admin credential token somewhere safe: it skips the backoff, so it can be used to reset a delayed admin.
 6. With Docker Compose, add `REGISTRY_TRUSTED_PROXIES` and `REGISTRY_LOGIN_BACKOFF_MODE` under the service `environment` if you need them: the shipped file does not forward them.
 
