@@ -215,6 +215,8 @@ func shellNavScreen(id shellNavID) screen {
 		return screenSecurityGitleaksConfig
 	case shellNavSigningPolicy:
 		return screenSecuritySigningConfig
+	case shellNavLoginSecurity:
+		return screenAdminLoginSecurity
 	case shellNavScanRuns:
 		return screenAdminScanRuns
 	case shellNavSecretFindings:

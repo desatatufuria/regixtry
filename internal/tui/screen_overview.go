@@ -173,6 +173,8 @@ func overviewOpenItem(id shellNavID) tea.Cmd {
 		return navigate(screenSecurityGitleaksConfig)
 	case shellNavSigningPolicy:
 		return navigate(screenSecuritySigningConfig)
+	case shellNavLoginSecurity:
+		return navigate(screenAdminLoginSecurity)
 	case shellNavScanRuns:
 		return navigate(screenAdminScanRuns)
 	case shellNavSecretFindings:

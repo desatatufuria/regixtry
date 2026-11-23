@@ -175,6 +175,9 @@ const (
 	slotProjects
 	slotProjectMembers
 	slotGrantProjectRole
+	// slotLoginSecurity holds loginSecurityScreen: Admin > Security > Login
+	// security, addressed via slotFor.
+	slotLoginSecurity
 	numScreenSlots
 )
 
@@ -240,6 +243,8 @@ func slotFor(id screen) (screenSlot, bool) {
 		return slotProjectMembers, true
 	case screenAdminGrantProjectRole:
 		return slotGrantProjectRole, true
+	case screenAdminLoginSecurity:
+		return slotLoginSecurity, true
 	default:
 		return 0, false
 	}
@@ -333,6 +338,8 @@ func newAdminScreenFor(id screen) adminScreen {
 		return newRobotsScreen()
 	case screenAdminProjects:
 		return newAdminProjectsScreen()
+	case screenAdminLoginSecurity:
+		return newLoginSecurityScreen()
 	default:
 		return nil
 	}
