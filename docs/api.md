@@ -171,6 +171,8 @@ Security notes for the member routes: a project admin can tell whether a usernam
 
 Admin errors: `401` (with a `WWW-Authenticate` challenge), `403`, `404`, `409`, `422`, `501`, `503` (a store failed mid-operation; the body says what to retry) depending on auth, existence, conflict, validation, or a capability that is disabled in this deployment; the body is `{ "error": "..." }`.
 
+Request bodies on `/admin/v1` are limited to 1 MiB (1048576 bytes), checked before the body is decoded and before any authorization that depends on it. A body over the limit, or a `Content-Length` over the limit (refused without reading the body), gives `413` with `{"error":"request body too large; the limit is 1 MiB"}`. Authentication is still checked first, so a missing or invalid token gets `401` even with an oversize body. Registry blob and manifest uploads have their own limits and are not affected.
+
 An unexpected server failure on an admin endpoint answers `500` with the body `{ "error": "internal server error" }`. The cause is not returned to the client; it is recorded in the server log together with the request.
 
 ### Scan settings example
