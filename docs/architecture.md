@@ -191,10 +191,21 @@ See [`docs/tui.md`](tui.md) for the user-facing behavior and key tables.
 
 | Store | Constructed | Condition | Holds |
 | --- | --- | --- | --- |
-| SQLite metadata (`internal/infra/metadata/sqlite`) | `metadata.New(cfg.DatabasePath)` — `newHandler` (main.go:2126) and `runTUI` (main.go:2204) | **Unconditional** | Repositories, manifests, tags, manifest↔blob relations, uploads, scan-run records, feature-runtime state |
-| Postgres auth (`internal/infra/auth/postgres`) | `openAuthStore(cfg.AuthPostgresDSN)` (main.go:2100-2115, and `runTUI` main.go:2214-2224) | **Conditional** — only if `-auth-postgres-dsn` / `AuthPostgresDSN` is set | Users, robots, repo grants, admin/access tokens |
+| SQLite metadata (`internal/infra/metadata/sqlite`) | `metadata.New(cfg.DatabasePath)` — `newHandler` (main.go:2126) and `runTUI` (main.go:2204) | **Unconditional** | Repositories, manifests, tags, manifest↔blob relations, uploads, scan-run records, feature-runtime state, projects (`projects` table) |
+| Postgres auth (`internal/infra/auth/postgres`) | `openAuthStore(cfg.AuthPostgresDSN)` (main.go:2100-2115, and `runTUI` main.go:2214-2224) | **Conditional** — only if `-auth-postgres-dsn` / `AuthPostgresDSN` is set | Users, robots, repo grants, project grants (`auth_project_grants`), admin/access tokens |
 
 If no Postgres DSN is configured, there is no auth store at all: no admin routes get mounted (`Router.NewRouter`, above), no login, and the registry runs in anonymous-access mode gated only by `AllowAnonymousPull`/`AllowAnonymousPush` (`ports.AccessConfig`, `internal/ports/defaults.go:11-16`). Blob bytes themselves never touch either database — they live under `<storage-root>/content/blobs/sha256/<digest-hex>` on the filesystem (`internal/infra/storage/fsblob/store.go`), written via a temp-then-rename upload lifecycle (`BeginUpload`/`PutUploadChunk`/`CommitUpload`, store.go:32-162).
+
+## Projects: two stores and how they converge
+
+A project is the first path segment of a repository name. The project itself (name, creator, creation time) lives in the SQLite `projects` table; the roles users and robots hold on it live in Postgres (`auth_project_grants`, keyed by user and project, with a foreign key to the user and none to the project). The stores cannot enforce a cross-database constraint, so `ProjectService` (`internal/app/regixtry/projects.go`) keeps them convergent under one lifecycle lock:
+
+- **Create** purges any stale grants left under that name first, then inserts the project row. A grant left by an earlier failed cleanup can therefore never be inherited by a new project of the same name.
+- **Delete** removes the (empty) project row, then purges its grants. It is idempotent: if the row is gone but the purge failed, the answer is a typed retryable `503` and repeating the `DELETE` finishes the cleanup (`404` only when nothing was left); the `project.deleted` event is written once, when the row goes.
+- The grant cleaner is bounded to 15 seconds per call, so a stalled auth database cannot hold the lifecycle lock for every other create and delete.
+- The rest is eventually consistent by design: a grant put concurrently with a delete can land just after the purge and leave an orphan that matches nothing (see [security.md](security.md#projects-grant-model-and-its-bounds)).
+
+Without Postgres auth there is no grant store and no admin API, so projects can only come from the startup backfill; run such a deployment with `-require-project=false`. At startup the SQLite store creates the table and runs a one-time idempotent backfill (marker `projects_from_repositories_v1`) that adds one project per first segment of existing slashed repositories, created by `migration`; it never deletes anything and does not run again, so a project an operator deletes later is not recreated. With enforcement on, the push path checks the project twice: a cheap check after authorization, and an authoritative one inside the write transaction.
 
 ## Manifest/tag delete and blob garbage collection
 
