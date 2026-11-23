@@ -496,3 +496,17 @@ func TestOverviewCriticalImagesCountIsCappedAtTheSampleSize(t *testing.T) {
 		t.Errorf("an under-cap count is not exact:\n%s", out)
 	}
 }
+
+func TestOverviewCountsOnlyGrantlessRobotsAsWithoutAccess(t *testing.T) {
+	t.Parallel()
+	s := newOverviewScreen()
+	s = s.applyLoaded(overviewLoadedMsg{robots: []ports.AdminRobot{
+		{ID: "r-1", Username: "project-bot", Project: "odabank", Enabled: true},
+		{ID: "r-2", Username: "repo-bot", Repository: "team/api", Enabled: true},
+		{ID: "r-3", Username: "grantless", Enabled: true},
+		{ID: "r-4", Username: "off", Enabled: false},
+	}})
+	if got := strings.Join(s.robotsWithoutAccess, ","); got != "grantless" {
+		t.Fatalf("robots without access = %q, want only grantless", got)
+	}
+}
