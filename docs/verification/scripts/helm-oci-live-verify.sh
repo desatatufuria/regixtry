@@ -25,7 +25,7 @@
 #     A Helm chart (KB-scale) is a complete non-issue.
 #   - internal/domain/regixtry/repository.go's ParseRepositoryRef accepts any
 #     "/"-separated lowercase-alphanumeric-plus-._- segment path, so
-#     helm/smoke-test-chart needs no pre-creation -- repositories are created
+#     helm/smoke-test-chart needs no repository pre-creation -- repositories are created
 #     implicitly on first push (ensureRepository in
 #     internal/infra/metadata/sqlite/store.go, an INSERT-or-lookup, not a
 #     distinct provisioning step).
@@ -38,6 +38,13 @@
 #     success, 400 when -delete-enabled is off -- gated by the same flag
 #     already confirmed ON for this live instance, no Helm-specific handling
 #     anywhere.
+#
+# PRECONDITION (project enforcement): a registry with auth enforces projects by
+# default, so the project `helm` must already exist. This script does NOT
+# create it (it targets a live system and mutates nothing beyond its own
+# artifact). If the push is refused with NAME_UNKNOWN it stops with a clear
+# message: create the project (POST /admin/v1/projects) or set
+# REGIXTRY_REQUIRE_PROJECT=false for the test registry, then rerun.
 #
 # Unlike keyless-signing-live-verify.sh, this script:
 #   - Never touches any signing policy (global or per-repository) -- nothing
@@ -82,6 +89,15 @@ PUSHED_DIGEST=""
 fail() {
   printf 'helm-oci-live-verify: %s\n' "$*" >&2
   exit 1
+}
+
+# fail_if_project_missing aborts with an operator-facing precondition message
+# when the captured push output shows the project does not exist.
+fail_if_project_missing() {
+  local output="$1"
+  if printf '%s' "${output}" | grep -q 'NAME_UNKNOWN\|does not exist; ask an administrator to create it'; then
+    fail "precondition: project '${REPOSITORY%%/*}' does not exist on ${LIVE_REGISTRY_HOST}; create it (POST /admin/v1/projects) or set REGIXTRY_REQUIRE_PROJECT=false on the test registry, then rerun"
+  fi
 }
 
 warn() {
@@ -277,7 +293,13 @@ main() {
   [[ -f "${chart_archive}" ]] || fail "helm package did not produce the expected archive: ${chart_archive}"
 
   printf 'pushing %s to oci://%s/helm\n' "${chart_archive}" "${LIVE_REGISTRY_HOST}"
-  helm push "${chart_archive}" "oci://${LIVE_REGISTRY_HOST}/helm"
+  local push_output=""
+  if ! push_output="$(helm push "${chart_archive}" "oci://${LIVE_REGISTRY_HOST}/helm" 2>&1)"; then
+    printf '%s\n' "${push_output}" >&2
+    fail_if_project_missing "${push_output}"
+    fail "helm push failed"
+  fi
+  printf '%s\n' "${push_output}"
 
   local repo_token=""
   repo_token="$(bearer_token "${LIVE_REGISTRY_USERNAME}" "${LIVE_REGISTRY_PASSWORD}" "repository:${REPOSITORY}:pull,push,delete")"

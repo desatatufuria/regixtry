@@ -259,6 +259,32 @@ registry_token() {
   printf '%s' "${token}"
 }
 
+# ensure_project creates a project with an unrestricted admin token (no scope).
+# Project enforcement is on by default with auth, so the first path segment of
+# the repository must exist before the first push. Idempotent: 201 and 409 are
+# success; anything else aborts.
+ensure_project() {
+  local container="$1"
+  local username="$2"
+  local password="$3"
+  local project="$4"
+  local response=""
+  local token=""
+  local code=""
+
+  response="$(docker run --rm --network "container:${container}" "${CURL_IMAGE}" \
+    -sS --max-time 20 -u "${username}:${password}" \
+    "http://127.0.0.1:5000/auth/token?service=regixtry")"
+  token="$(printf '%s' "${response}" | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n1 | sed -E 's/.*"([^"]*)"$/\1/')"
+  [[ -n "${token}" ]] || fail "ensure_project: could not parse an admin token from the /auth/token response"
+
+  code="$(docker run --rm --network "container:${container}" "${CURL_IMAGE}" \
+    -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H "Authorization: Bearer ${token}" \
+    -d "{\"name\":\"${project}\"}" "http://127.0.0.1:5000/admin/v1/projects")"
+  [[ "${code}" == "201" || "${code}" == "409" ]] \
+    || fail "ensure_project: creating project ${project} returned HTTP ${code}, expected 201 or 409"
+}
+
 assert_non_root() {
   local container="$1"
   local config_user=""
@@ -424,6 +450,7 @@ run_auth_scenario() {
 
   # Auth grants: Basic credentials exchanged for a Bearer token, then that
   # token authorizes a real blob PUT/HEAD round trip.
+  ensure_project "${AUTH_CONTAINER}" admin "${admin_password}" "${repo%%/*}"
   token="$(registry_token "${AUTH_CONTAINER}" admin "${admin_password}" "${repo}")"
 
   headers="$(docker run --rm --network "container:${AUTH_CONTAINER}" "${CURL_IMAGE}" \
