@@ -1,0 +1,24 @@
+  Admin › Access › Projects › odabank › Grant role                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Grant project role                                                                                 project odabank  
+    Overview                   │                                                                                                                      
+                               │  Member type   ( ) User  (*) Robot                                                                                   
+  ACCESS                       │  Member         release-bot                                                                                          
+      Users                    │                 ▸ release-bot  robot                                                                                 
+      Robots                   │  Project role  ( ) Project reader  ( ) Project writer  (*) Project admin                                             
+      Repository access        │                                                                                                                      
+    ▸ Projects                 │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+                               │  │ Project admin is not available for robots                                                                      │  
+  SECURITY                     │  │ Robots can be Project reader or Project writer only. Project admin is for users.                               │  
+      Image scanning           │  │                                                                                                                │  
+      Secret scanning          │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Signing policy           │                                                                                                                      
+                               │  Grant role  enter  Cancel  esc                                                                                      
+  OPERATIONS                   │                                                                                                                      
+      Scan runs                │                                                                                                                      
+      Secret findings          │                                                                                                                      
+      Update channel           │                                                                                                                      
+                               │                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ↑↓ pick member   ←→ type, role   enter grant   esc cancel                                                             F2 mouse on  

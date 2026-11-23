@@ -1,0 +1,24 @@
+  Admin › Access › Projects › odabank › Members                                                                                signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  odabank                                                                                                             
+    Overview                   │  project, 3 repositories                                                                                             
+                               │                                                                                                                      
+  ACCESS                       │  ╭────────────────────────────────────────────────────────────────────────╮  ╭────────────────────────────────────╮  
+      Users                    │  │ MEMBERS                                                                │  │ REPOSITORIES IN THIS PROJECT       │  
+      Robots                   │  │ Could not load members: connection refused.                            │  │   odabank/api                      │  
+      Repository access        │  │ Press r to retry.                                                      │  │   odabank/payments                 │  
+    ▸ Projects                 │  │                                                                        │  │   odabank/web                      │  
+                               │  │                                                                        │  │                                    │  
+  SECURITY                     │  │                                                                        │  │                                    │  
+      Image scanning           │  │                                                                        │  │                                    │  
+      Secret scanning          │  │                                                                        │  │                                    │  
+      Signing policy           │  │                                                                        │  │                                    │  
+                               │  │                                                                        │  │                                    │  
+  OPERATIONS                   │  │                                                                        │  │ 3 repositories. Browse them in     │  
+      Scan runs                │  │                                                                        │  │ Console › Projects › odabank.      │  
+      Secret findings          │  ╰────────────────────────────────────────────────────────────────────────╯  ╰────────────────────────────────────╯  
+      Update channel           │                                                                                                                      
+                               │  A project role covers every repository inside odabank, now and later. A repository grant can only add access.       
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab repositories   r retry   g add member   esc back   q quit                                                                          F2 mouse on  

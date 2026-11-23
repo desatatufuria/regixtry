@@ -34,6 +34,10 @@ func (s adminProjectsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 
 	lines := []string{s.titleLine(theme, bodyW), "", s.renderTable(theme, env, bodyW, visible), s.statusLine(theme, bodyW)}
 	lines = append(lines, help...)
+	if s.capturesInput() {
+		// A dialog sits on a blank panel: no table edge is cut by it.
+		lines = lines[:2]
+	}
 
 	frame := screenFrame{
 		Context: adminContext("Access", "Projects"),

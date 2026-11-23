@@ -3,22 +3,22 @@
  regixtry admin                │
                                │  Project  ╭──────────────────────────────────────────────────────────────╮               4 projects, sorted by name
     Overview                   │           │  New project                                                 │
-                               │  ╭──────  │                                                              │  ──────────────────────────────────────╮
-  ACCESS                       │  │   PRO  │  Project name                                                │      REPOSITORIES    TAGS    LAST PUSH │
-      Users                    │  │ ▸ gos  │   Oda/bank▏                                                  │                 2      17       18 Nov │
-      Robots                   │  │   met  │  A project name has no slash. Repositories go inside the     │                10      50       20 Nov │
-      Repository access        │  │   oda  │  project.                                                    │                 3      27       19 Nov │
-    ▸ Projects                 │  │   san  │                                                              │                 0       0        never │
-                               │  │        │  ╭────────────────────────────────────────────────────────╮  │                                        │
-  SECURITY                     │  │        │  │ (no valid name yet)                                    │  │                                        │
-      Image scanning           │  │        │  │ type a lowercase name                                  │  │                                        │
-      Secret scanning          │  │        │  ╰────────────────────────────────────────────────────────╯  │                                        │
-      Signing policy           │  │        │                                                              │                                        │
-                               │  │        │  Nothing is created until the name is valid.                 │                                        │
-  OPERATIONS                   │  │        │                                                              │                                        │
-      Scan runs                │  ╰──────  │   Create project                                     enter   │  ──────────────────────────────────────╯
+                               │           │                                                              │
+  ACCESS                       │           │  Project name                                                │
+      Users                    │           │   Oda/bank▏                                                  │
+      Robots                   │           │  A project name has no slash. Repositories go inside the     │
+      Repository access        │           │  project.                                                    │
+    ▸ Projects                 │           │                                                              │
+                               │           │  ╭────────────────────────────────────────────────────────╮  │
+  SECURITY                     │           │  │ (no valid name yet)                                    │  │
+      Image scanning           │           │  │ type a lowercase name                                  │  │
+      Secret scanning          │           │  ╰────────────────────────────────────────────────────────╯  │
+      Signing policy           │           │                                                              │
+                               │           │  Nothing is created until the name is valid.                 │
+  OPERATIONS                   │           │                                                              │
+      Scan runs                │           │   Create project                                     enter   │
       Secret findings          │           │   Cancel                                               esc   │
-      Update channel           │  A proje  ╰──────────────────────────────────────────────────────────────╯  embers. d deletes a project only when
-                               │  it has no repositories. s cycles the sort: name, last push, repositories.
+      Update channel           │           ╰──────────────────────────────────────────────────────────────╯
+                               │
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   enter create   esc cancel                                                                                                              F2 mouse on  

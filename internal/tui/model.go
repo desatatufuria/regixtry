@@ -770,6 +770,18 @@ func (m Model) updateModel(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case overviewOpenMsg:
 		return m.openFromOverview(msg.action)
+	case openProjectMembersMsg:
+		next := newAdminProjectMembersScreen(msg.project, msg.toast)
+		m.adminScreens[slotProjectMembers] = next
+		m.screen = screenAdminProjectMembers
+		m.status = ""
+		return m, next.Init(m.screenEnv())
+	case openGrantProjectRoleMsg:
+		next := newGrantProjectRoleScreen(msg)
+		m.adminScreens[slotGrantProjectRole] = next
+		m.screen = screenAdminGrantProjectRole
+		m.status = ""
+		return m, next.Init(m.screenEnv())
 	case openRobotsMsg:
 		return m.mountRobots(msg.selectID)
 	case openCreateRobotMsg:
@@ -1938,6 +1950,8 @@ func (m Model) migratedScreenCapturesTextInput() bool {
 	case robotsScreen:
 		return s.confirm.Active()
 	case adminProjectsScreen:
+		return s.capturesInput()
+	case adminProjectMembersScreen:
 		return s.capturesInput()
 	case tokensScreen:
 		return s.capturesInput()

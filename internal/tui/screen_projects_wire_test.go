@@ -26,7 +26,7 @@ func projectsSettle(s adminScreen, env screenEnv, cmd tea.Cmd) (adminScreen, []t
 		case tea.BatchMsg:
 			queue = append(queue, typed...)
 			continue
-		case openProjectMembersMsg, navigateMsg:
+		case openProjectMembersMsg, openGrantProjectRoleMsg, navigateMsg:
 			outgoing = append(outgoing, msg)
 			continue
 		}

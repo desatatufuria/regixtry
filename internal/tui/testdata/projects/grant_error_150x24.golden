@@ -1,0 +1,24 @@
+  Admin › Access › Projects › odabank › Grant role                                                                             signed in as operator  
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ regixtry admin                │                                                                                                                      
+                               │  Grant project role                                                                                 project odabank  
+    Overview                   │                                                                                                                      
+                               │  Member type   (*) User  ( ) Robot                                                                                   
+  ACCESS                       │  Member         dave                                                                                                 
+      Users                    │                 ▸ dave  user                                                                                         
+      Robots                   │  Project role  ( ) Project reader  ( ) Project writer   (*) Project admin                                            
+      Repository access        │                                                                                                                      
+    ▸ Projects                 │  ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  
+                               │  │ dave becomes Project admin of odabank                                                                          │  
+  SECURITY                     │  │ Write access to every repository in odabank, existing and future, and the right to give others Reader or       │  
+      Image scanning           │  │ Writer access to it. Applies from the next request.                                                            │  
+      Secret scanning          │  ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  
+      Signing policy           │  Could not grant role: project administrators cannot grant project admin.                                            
+                               │   Grant role  enter   Cancel  esc                                                                                    
+  OPERATIONS                   │                                                                                                                      
+      Scan runs                │                                                                                                                      
+      Secret findings          │                                                                                                                      
+      Update channel           │                                                                                                                      
+                               │                                                                                                                      
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  tab next field   ↑↓ pick member   ←→ type, role   enter grant   esc cancel                                                             F2 mouse on  
