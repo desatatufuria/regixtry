@@ -381,6 +381,21 @@ EOF
   docker push "${image_ref}"
 }
 
+# ensure_project creates the project (first path segment of REPOSITORY) with an
+# unrestricted admin token. Project enforcement is on by default with auth, so
+# it must exist before the first push. Idempotent: 201 and 409 are success.
+ensure_project() {
+  local admin_token="$1"
+  local project="$2"
+  local code=""
+
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST \
+    -H "Authorization: Bearer ${admin_token}" -d "{\"name\":\"${project}\"}" \
+    "http://127.0.0.1:${REGISTRY_PORT}/admin/v1/projects")"
+  [[ "${code}" == "201" || "${code}" == "409" ]] \
+    || fail "ensure_project: creating project ${project} returned HTTP ${code}, expected 201 or 409"
+}
+
 main() {
   command -v docker >/dev/null 2>&1 || fail "missing required command: docker"
   command -v go >/dev/null 2>&1 || fail "missing required command: go"
@@ -428,6 +443,7 @@ main() {
   local admin_token=""
   local pull_push_token=""
   admin_token="$(bearer_token "${ADMIN_USERNAME}" "${ADMIN_PASSWORD}" "")"
+  ensure_project "${admin_token}" "${REPOSITORY%%/*}"
   pull_push_token="$(bearer_token "${ADMIN_USERNAME}" "${ADMIN_PASSWORD}" "repository:${REPOSITORY}:pull,push")"
 
   # `docker login` populates the credential store cosign and docker buildx

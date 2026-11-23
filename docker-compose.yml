@@ -34,6 +34,7 @@ services:
     environment:
       REGISTRY_AUTH_POSTGRES_DSN: "${REGIXTRY_AUTH_POSTGRES_DSN:?set it in .env (regixtry setup --mode docker generates one; manually: cp docker.env.example .env)}"
       REGISTRY_PUBLIC_URL: http://localhost:${REGIXTRY_PORT:-5000}
+      REGISTRY_REQUIRE_PROJECT: "${REGIXTRY_REQUIRE_PROJECT:-}"
     ports:
       - "${REGIXTRY_PORT:-5000}:5000"
     volumes:

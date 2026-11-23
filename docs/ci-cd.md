@@ -55,6 +55,8 @@ jobs:
       - run: docker push registry.example.com/team/app:${{ github.sha }}
 ```
 
+With auth enabled, pushes need an existing project (project enforcement is on by default then, off when anonymous): the first path segment of the image name (`team` above) must have been created by a global admin, and the CI user or robot needs a role on it (a project role, or an exact repository grant). See [users.md](users.md#projects-and-project-roles).
+
 `docker/build-push-action` can replace the last two steps if the runner and daemon support BuildKit:
 
 ```yaml

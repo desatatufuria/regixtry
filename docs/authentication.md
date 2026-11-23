@@ -61,6 +61,16 @@ Beyond per-repository grants, `Principal` (`internal/domain/auth/principal.go`) 
 - **`IsAdmin`** — a global administrator. `hasGrantedRepositoryAccess` short-circuits to full access on every repository for any read/write/admin check, bypassing per-repository grants entirely. A token still must carry a scope compatible with the requested operation; global admin removes the grant check, not the scope check.
 - **`IsReadOnly`** — the registry-wide read-only role. `hasGrantedRepositoryAccess` grants read access on every repository with no explicit grant required, and this can never widen to write or catalog-admin access — the read-only probe is only ever evaluated against `RepoRole.AllowsRead`. See [security.md](security.md) for the security scope of this role.
 
+## Project grants
+
+A project is the first path segment of a repository name (`odabank/payments/strike` belongs to `odabank`). A project grant gives one user or robot one role (`repo-reader`, `repo-writer` or `repo-admin`; robots only reader or writer) over every repository of that project, now and later. Project grants live in the auth database (`auth_project_grants`, one row per user and project); the projects themselves live in the registry's SQLite database (see [architecture.md](architecture.md#projects-two-stores-and-how-they-converge)).
+
+- **Matching.** The project of a repository is the text before the first `/`, compared with `==` on the whole segment: a grant on `odabank` never covers `odabank2/...`, and never covers a flat repository that happens to be called `odabank`.
+- **Token scopes stay exact.** A Docker token request names exact repositories (`repository:odabank/app:pull,push`). At issue time the server expands a project grant into the actions it allows on that one repository, and the token carries the exact scope it was asked for, never a project wildcard. A request for a repository outside the project gets no actions from it. The registry-wide `IsReadOnly` and `IsAdmin` rules are unchanged, and a project grant cannot widen a read-only user.
+- **Evaluated on every request.** Each request rebuilds the caller's principal from the stored grants, so granting or revoking a project role applies from the next request; issued tokens are neither rebuilt nor revoked. A token issued before a revoke is refused on its next use. A read error on the grants fails closed (no project access).
+- **Effective role.** The effective role on a repository is the highest of the project grant and the exact repository grant. An exact grant can only add access; it never narrows what the project gives, and revoking the project grant leaves exact grants in place.
+- **Project admin.** `repo-admin` on a project lets a non-admin manage that project's members within the bounds in [users.md](users.md#projects-and-project-roles).
+
 Valid token scopes are `repository:<name>:pull`, `repository:<name>:push` (or both), and `regixtry:catalog:*`.
 
 ## `/admin/v1` route inventory
@@ -80,6 +90,8 @@ Every route under `/admin/v1` requires `Authorization: Bearer <access-token>`. A
 - `GET /admin/v1/users/{id}/admin-tokens`
 - `POST /admin/v1/users/{id}/admin-tokens`
 - `DELETE /admin/v1/users/{id}/admin-tokens/{accessor}`
+- `GET /admin/v1/projects`, `POST /admin/v1/projects`, `GET /admin/v1/projects/{project}`, `DELETE /admin/v1/projects/{project}`
+- `GET /admin/v1/users/{id}/project-grants`
 - `GET /admin/v1/robots`
 - `POST /admin/v1/robots`
 - `DELETE /admin/v1/robots/{id}`
@@ -95,6 +107,14 @@ These routes are dispatched behind `handleAdmin`'s blanket `requireAdminPrincipa
 
 This is the **one deliberate, narrow exception** to "every `/admin/v1` route requires global admin." `handleAdmin` checks the `repositories/` URL prefix *before* the blanket `requireAdminPrincipal` gate and routes it through `requireAuthenticatedPrincipal` instead, which only requires a valid Bearer token — not `IsAdmin`. Authorization for these three routes is then decided in the service layer by `requireAdminOrRepoAdmin` (`internal/app/auth/service.go`), which passes for a global admin *or* for a principal holding a `repo-admin` grant on that exact repository (read from `actor.Grants`, populated for every login regardless of requested scopes). See [security.md](security.md) for the escalation bounds enforced on this delegated path, and [users.md](users.md) for usage examples.
 
-No other route under `/admin/v1` is reachable by a non-admin principal; this exception applies only to the `repositories/` prefix and only to grant management on the caller's own administered repository.
+### Authenticated-but-not-necessarily-admin route (project members)
+
+- `GET /admin/v1/projects/{project}/members`
+- `PUT /admin/v1/projects/{project}/members/{username}`
+- `DELETE /admin/v1/projects/{project}/members/{username}`
+
+Same pattern as the repository routes: the HTTP layer only authenticates, and the service allows a global admin or a user holding `repo-admin` on that project. The caller is checked before the project is looked up, so a caller without rights gets the same `403` whether or not the project exists.
+
+No other route under `/admin/v1` is reachable by a non-admin principal; this exception applies only to the `repositories/` prefix (grant management on the caller's own administered repository) and the member routes above (own project).
 
 Full request/response bodies are documented in [api.md](api.md). There is no delete-user endpoint — human users are only ever enabled or disabled, never hard-deleted (robots are the one exception; see [users.md](users.md)).

@@ -76,6 +76,57 @@ with `-trusted-proxies 127.0.0.1` (add `::1` if Caddy connects over IPv6 loopbac
 
 `upgrade` uses the setup provenance record, runs preflight checks, supports `--ref` and `--yes`, and shows progress. Bootstrap rollback removes generated artifacts and stops the service. Review the command output and `journalctl` before retrying.
 
+### Upgrade to the projects release
+
+This release adds projects (the first path segment of a repository name), project roles, and turns project enforcement **on by default when auth is enabled** (off when anonymous). The release notes are in [release-notes-projects.md](release-notes-projects.md). Read the three warnings first.
+
+> **Irreversible: the scan-history purge.** The first start of this version runs a one-time migration that permanently deletes duplicate scan history (see [the purge note](#upgrade-note-scan-history-purge-irreversible) below; about 12 s per 200k scan runs). Restoring a backup is the only undo.
+>
+> **Enforcement is on by default when auth is enabled.** Pushes to a project that does not exist are refused with `404 NAME_UNKNOWN`, and a new repository without a slash is refused with `400 NAME_INVALID`. Existing repositories keep working.
+>
+> **A deployment without auth (no `-auth-postgres-dsn`) keeps enforcement off by default**, because projects are created through the admin API, which is not mounted without auth. An explicit `-require-project=true` without a DSN fails at startup (`project enforcement needs the admin API: configure -auth-postgres-dsn or set -require-project=false`).
+
+**Before upgrading**
+
+1. Back up SQLite: stop the service cleanly (or copy `metadata.db` together with its `-wal` and `-shm` files) and keep `metadata.db` and the `content` directory together. The new `projects` table and the project backfill are additive, but the purge is not.
+2. Back up the Postgres auth database (for example `pg_dump --format=custom "$DSN" > auth.dump`). The release adds one table, `auth_project_grants`, created automatically at start; nothing existing is changed.
+3. Decide whether to run with enforcement (auth deployments: on unless you say otherwise). To turn it off, set `REGISTRY_REQUIRE_PROJECT=false` (systemd: a line in the `EnvironmentFile`; Docker Compose: set `REGIXTRY_REQUIRE_PROJECT=false` in `.env`; the shipped compose file forwards it, and an empty value means the default; a compose file from an earlier release needs `REGISTRY_REQUIRE_PROJECT: "${REGIXTRY_REQUIRE_PROJECT:-}"` added under the `regixtry` service `environment`) or pass `-require-project=false`. After a `setup` or `upgrade` that regenerates those files, check the setting is still there.
+
+**What the first start does.** It creates the `projects` table and, once (marker `projects_from_repositories_v1`), one project per first path segment of the slashed repositories that exist at that moment, with `created_by` `migration`. Flat repositories create no project and keep working with their exact grants. Nothing is deleted. The backfill does not run again: a repository pushed later while enforcement was off gets no project, and a project you delete is not recreated. `serve` prints the effective mode and why (`project enforcement: on (default: admin API available)`, `off (default: no admin API, ...)` or `on|off (explicit)`) before `regixtry serving on ...`.
+
+**Create projects before opening pushes to a new customer.** Only a global admin creates projects. Get an unrestricted token (a `docker login` token carries scopes and is refused by the admin routes):
+
+```sh
+TOKEN=$(curl -s -u admin:PASSWORD 'https://registry.example.com/auth/token?service=regixtry' | jq -r .token)
+curl -X POST -H "Authorization: Bearer $TOKEN" -d '{"name":"odabank"}' \
+  https://registry.example.com/admin/v1/projects
+curl -X PUT -H "Authorization: Bearer $TOKEN" -d '{"role":"repo-writer"}' \
+  https://registry.example.com/admin/v1/projects/odabank/members/ana
+```
+
+In the TUI (`regixtry tui -api-base-url ...`): `Admin > Access > Projects`, `n` to create, `Enter` on a project and `g` to give a role. See [tui.md](tui.md#projects).
+
+**Troubleshooting**
+
+| Symptom | Cause and fix |
+| --- | --- |
+| Push fails with `404` `NAME_UNKNOWN` (`project "odabank" does not exist; ask an administrator to create it`) | The project has no row. Create it as above. A caller without push permission never sees this message (authorization is checked first). |
+| Push fails with `400` `NAME_INVALID` (`repository "x" has no project; use <project>/x ...`) | New flat names are refused while enforcement is on. Push under a project (`odabank/x`). |
+| A repository that used to push now gets `NAME_UNKNOWN` | It was created after the backfill ran with enforcement off, or while an older binary was running after a rollback. Create its project. |
+| Nothing can create projects | No auth database is configured, so enforcement defaults to off and an explicit `true` refuses to start. Add `-auth-postgres-dsn` to use projects. |
+| Admin call answers `503` `... was deleted but its grants could not be purged; retry the delete` | The auth database was unreachable during a project delete. Repeat the same `DELETE`. |
+
+**Legacy flat repositories.** Existing flat repositories (no slash) keep working: push, pull, tags, and their exact grants are unchanged, and no project is needed. What is refused is creating a new flat name. A flat repository whose first push failed midway has no repository row, so it cannot be retried while enforcement is on.
+
+**Rollback.** Stop the service and start the previous binary. It ignores the `projects` table and `auth_project_grants`, and does not enforce projects, so pushes to any name work again. Project grants are **not honored** by the old binary: a user or robot whose access came only from a project role has no access until it gets exact repository grants (this fails closed). Project roles, projects and their data stay in place and work again after you upgrade. Repositories created while the old binary runs have no project row, so after re-upgrading with enforcement on, pushing to them answers `NAME_UNKNOWN` until you create their project (the backfill does not run again). The scan-history purge is **not** undone by switching binaries; only restoring the `metadata.db` backup brings that history back, together with the loss of everything pushed since the backup. Restore the Postgres dump only if you also want to discard project roles and any other auth change made since.
+
+**Behavior changes in this release**
+
+- SQLite writes wait instead of failing: single-statement writes now go through the same FIFO write queue as write transactions, so a push no longer surfaces a raw `SQLITE_BUSY` when a long write (for example a garbage-collection reclaim) is running. A push in that window is slower, not failed.
+- Cancelling or reaping an upload no longer waits for a client that stopped sending: `DELETE .../blobs/uploads/<id>` and the reaper return while a writer is parked in a body read, and that writer's request ends.
+
+Note on the upload reaper: besides expired upload rows, it removes upload directories under `<storage-root>/content/uploads/` that have no session row and are older than the upload TTL.
+
 ### Upgrade note: scan history purge (irreversible)
 
 Scan results are now latest-only: one result per (tenant, repository, digest). The first start of a version with this model runs a one-time migration (`scan_runs_latest_only_purge_v1` in `schema_backfills`) that **permanently deletes** the old duplicate scan history. Per digest it keeps the newest completed run with its findings and DB freshness (else the newest failed run, else the newest skipped row); queued and running runs are never deleted, and skipped rows are removed only for digests that have a completed or failed result. Secret-scan history is not touched.
