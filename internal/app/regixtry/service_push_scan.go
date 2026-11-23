@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
@@ -36,6 +39,13 @@ const (
 	maxDeferredPushScans = 256
 	maxDeferredPerPusher = 32
 
+	// anonymousPushScanMaxPerPusher is the baseline per-identity cap kept for
+	// pushes without a principal: they all share one bucket, so the smaller
+	// default would throttle legitimate anonymous registries.
+	anonymousPushScanMaxPerPusher = 16
+	// deferredDropLogInterval rate-limits the "retry list full" log line.
+	deferredDropLogInterval = time.Minute
+
 	pushScanSkippedError = "skipped: push scan queue full"
 
 	// maxStuckSecretLegs bounds goroutines leaked by secret-scan runners
@@ -63,6 +73,28 @@ type pushScanLimiter struct {
 	// slots free up. drainRunning is true while one drainer goroutine runs.
 	deferred     []deferredPushScan
 	drainRunning bool
+	// deferredDropped counts pushes not deferred because the list was full;
+	// droppedSinceLog and lastDropLog drive the rate-limited log line.
+	deferredDropped int
+	droppedSinceLog int
+	lastDropLog     time.Time
+}
+
+// noteDeferDropped counts one push that could not be deferred and reports
+// whether a log line is due (at most one per deferredDropLogInterval),
+// returning how many drops it covers.
+func (l *pushScanLimiter) noteDeferDropped(now time.Time) (int, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.deferredDropped++
+	l.droppedSinceLog++
+	if !l.lastDropLog.IsZero() && now.Sub(l.lastDropLog) < deferredDropLogInterval {
+		return 0, false
+	}
+	n := l.droppedSinceLog
+	l.droppedSinceLog = 0
+	l.lastDropLog = now
+	return n, true
 }
 
 type deferredPushScan struct {
@@ -109,11 +141,16 @@ func (l *pushScanLimiter) acquire(tenant string, repository string, pusher strin
 func (l *pushScanLimiter) acquireLocked(tenant string, repository string, pusher string) (func(), bool) {
 	key := tenant + "\x00" + repository
 	pusherKey := tenant + "\x00" + pusher
-	if l.total >= l.maxPending || l.perRepo[key] >= l.maxPerRepo || l.perPusher[pusherKey] >= l.maxPerPusher {
+	maxPerPusher := l.maxPerPusher
+	if pusher == "" && maxPerPusher == DefaultPushScanMaxPerPusher {
+		maxPerPusher = anonymousPushScanMaxPerPusher
+	}
+	if l.total >= l.maxPending || l.perRepo[key] >= l.maxPerRepo || l.perPusher[pusherKey] >= maxPerPusher {
 		return nil, false
 	}
 	// Reserve the last slice of the pool for identities with no slot yet.
-	if l.perPusher[pusherKey] > 0 && l.total >= l.maxPending-l.maxPending/pushScanNewcomerReserveDivisor {
+	// Anonymous pushes share one bucket: nobody to protect, so no reserve.
+	if pusher != "" && l.perPusher[pusherKey] > 0 && l.total >= l.maxPending-l.maxPending/pushScanNewcomerReserveDivisor {
 		return nil, false
 	}
 	l.total++
@@ -208,6 +245,20 @@ func (l *pushScanLimiter) nextDeferred(stuck bool) (deferredPushScan, func(), bo
 	return deferredPushScan{}, nil, false
 }
 
+// deferredManifestExists reports whether the deferred digest is still
+// published. A deleted manifest is dropped without a scan or a result row;
+// any other lookup error keeps the entry (scanning is harmless).
+func (s *Service) deferredManifestExists(d deferredPushScan) bool {
+	repository, err := parseRepository(d.repository)
+	if err != nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), skippedRecordTimeout)
+	defer cancel()
+	_, err = s.metadata.ResolveManifest(ctx, d.tenant, repository, d.digest)
+	return err == nil || !domain.IsCode(err, domain.ErrorCodeNotFound)
+}
+
 // kickDeferredPushScans starts the single drainer when work is queued.
 func (s *Service) kickDeferredPushScans() {
 	l := s.pushScans
@@ -229,6 +280,10 @@ func (s *Service) kickDeferredPushScans() {
 			s.backgroundWork.Add(1)
 			go func() {
 				defer s.backgroundWork.Done()
+				if !s.deferredManifestExists(d) {
+					release() // manifest deleted while deferred: nothing to scan
+					return
+				}
 				s.runPushScan(context.Background(), d.tenant, d.repository, d.reference, d.digest, s.releaseThenDrain(release))
 			}()
 		}
@@ -246,6 +301,8 @@ func (s *Service) startPushScan(tenant string, repository string, reference stri
 		s.noteSkippedPushScan(tenant, repository, reference, digest)
 		if s.pushScans.deferPushScan(deferredPushScan{tenant, repository, reference, digest, pusher}) {
 			s.kickDeferredPushScans()
+		} else if n, due := s.pushScans.noteDeferDropped(s.now()); due {
+			slog.Warn(fmt.Sprintf("push scan admission: deferred list full, dropped %d pushes in the last minute (sweep recovers them only when enabled)", n))
 		}
 		return
 	}

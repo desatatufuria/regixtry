@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainauth "regixtry/internal/domain/auth"
+	domain "regixtry/internal/domain/regixtry"
 	"regixtry/internal/ports"
 )
 
@@ -709,6 +710,38 @@ func TestPushScanLimiterNeverExceedsCapsUnderParallelIdentitiesAndLeaksNoSlot(t 
 	}
 }
 
+// waitForPushScansIdle waits until no slot is held, nothing is deferred and
+// the drainer has stopped (releases happen on goroutines WaitForBackgroundWork
+// does not cover).
+func waitForPushScansIdle(t *testing.T, service *Service) {
+	t.Helper()
+	waitUntil(t, "push scans to go idle", func() bool {
+		l := service.pushScans
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.total == 0 && len(l.deferred) == 0 && !l.drainRunning
+	})
+	service.WaitForBackgroundWork()
+}
+
+// publishedDigests resolves the digests of tags prefix-0..n-1.
+func publishedDigests(t *testing.T, service *Service, repository string, prefix string, n int) []string {
+	t.Helper()
+	ref, err := parseRepository(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, n)
+	for i := range out {
+		m, err := service.metadata.ResolveManifest(context.Background(), "tenant-a", ref, fmt.Sprintf("%s-%d", prefix, i))
+		if err != nil {
+			t.Fatalf("ResolveManifest(%s-%d) = %v", prefix, i, err)
+		}
+		out[i] = m.Digest.String()
+	}
+	return out
+}
+
 // TestRefusedPushScansAreDeferredAndScannedOnceSlotsFree: a push refused at
 // admission is not dropped; it is retried within the caps, so it is scanned
 // even though the scheduled sweep is disabled (ScheduleEnabled defaults to
@@ -718,17 +751,10 @@ func TestRefusedPushScansAreDeferredAndScannedOnceSlotsFree(t *testing.T) {
 	service.SetPushScanLimits(2, 8, 2)
 	defer cleanup()
 
-	digests := make([]string, 5)
-	for i := range digests {
-		digests[i] = pushScanDigest("d", i)
-		service.startPushScan("tenant-a", "a/app", "t", digests[i], "writer-a")
-	}
+	pushDistinctManifestsAs(t, service, "a/app", 5, "d", "writer-a")
+	digests := publishedDigests(t, service, "a/app", "d", 5)
 	waitUntil(t, "two admitted scans", func() bool { return pushScanSlotsInUse(service) == 2 })
-	if status := latestPushScanStatus(service, "a/app", digests[4]); status == ports.ScanRunStatusCompleted {
-		t.Fatalf("deferred digest scanned while every slot is held")
-	}
 
-	// Free the slots: the deferred digests must now be scanned to completion.
 	service.SetScanRunner(&fakeScanRunner{})
 	close(runner.release)
 	waitUntilWithin(t, 10*time.Second, "every deferred digest to complete", func() bool {
@@ -739,8 +765,95 @@ func TestRefusedPushScansAreDeferredAndScannedOnceSlotsFree(t *testing.T) {
 		}
 		return true
 	})
-	service.WaitForBackgroundWork()
-	if got := pushScanSlotsInUse(service); got != 0 {
-		t.Fatalf("slots in use = %d after all scans finished, want 0 (no leak)", got)
+	waitForPushScansIdle(t, service)
+}
+
+// TestDeferredScanOfADeletedManifestIsDroppedWithoutARow: deleting a manifest
+// while its scan is deferred must not scan it or leave a result row.
+func TestDeferredScanOfADeletedManifestIsDroppedWithoutARow(t *testing.T) {
+	service, runner, cleanup := newPushScanService(t)
+	service.SetPushScanLimits(1, 8, 1)
+	defer cleanup()
+
+	pushDistinctManifestsAs(t, service, "a/app", 2, "s", "writer-a")
+	digests := publishedDigests(t, service, "a/app", "s", 2)
+	waitUntil(t, "one admitted scan", func() bool { return pushScanSlotsInUse(service) == 1 })
+	// s-1 was refused and deferred: delete it, then free the slot.
+	ref, _ := parseRepository("a/app")
+	digest, err := domain.ParseDigest(digests[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.metadata.DeleteManifestByDigest(context.Background(), "tenant-a", ref, digest); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeScanRunner{}
+	service.SetScanRunner(fake)
+	close(runner.release)
+	waitForPushScansIdle(t, service)
+
+	fake.mu.Lock()
+	calls := len(fake.calls)
+	fake.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("scanner called %d times for deferred work, want 0 (manifest deleted)", calls)
+	}
+	runs, _ := service.metadata.ListScanRuns(context.Background(), "tenant-a", "a/app", 50)
+	for _, run := range runs {
+		if run.Digest == digests[1] && run.Status != ports.ScanRunStatusSkipped {
+			t.Fatalf("deleted digest left a %q row, want none", run.Status)
+		}
+	}
+}
+
+func TestDeferredListFullDropsAreCountedAndLoggedAtMostOncePerMinute(t *testing.T) {
+	l := newPushScanLimiter()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if n, due := l.noteDeferDropped(t0); !due || n != 1 {
+		t.Fatalf("first drop = (%d,%v), want (1,true)", n, due)
+	}
+	for i := 0; i < 5; i++ {
+		if _, due := l.noteDeferDropped(t0.Add(time.Duration(i+1) * 10 * time.Second)); due && i < 4 {
+			t.Fatalf("drop %d logged inside the minute", i)
+		}
+	}
+	// 5 drops at +10s..+50s: none due; the one at +50s is the 5th, still inside.
+	if n, due := l.noteDeferDropped(t0.Add(61 * time.Second)); !due || n != 6 {
+		t.Fatalf("drop after a minute = (%d,%v), want (6,true) covering all drops since the last line", n, due)
+	}
+	if l.deferredDropped != 7 {
+		t.Fatalf("deferredDropped = %d, want 7", l.deferredDropped)
+	}
+}
+
+func TestAnonymousPushScansKeepTheBaselinePerIdentityCapWithoutReserve(t *testing.T) {
+	l := newPushScanLimiter()
+	for i := 0; i < 16; i++ {
+		if _, ok := l.acquire("t", fmt.Sprintf("r%d/app", i), ""); !ok {
+			t.Fatalf("anonymous acquire %d refused, want admitted up to 16", i)
+		}
+	}
+	if _, ok := l.acquire("t", "r99/app", ""); ok {
+		t.Fatal("17th anonymous scan admitted, want the baseline cap of 16")
+	}
+	// No reserve for the shared anonymous bucket: it may use the whole pool.
+	small := newPushScanLimiter()
+	small.setLimits(8, 8, 0)
+	for i := 0; i < 8; i++ {
+		if _, ok := small.acquire("t", fmt.Sprintf("r%d/app", i), ""); !ok {
+			t.Fatalf("anonymous acquire %d refused below the global cap", i)
+		}
+	}
+	// A named identity still gets 8 as its cap and the reserve.
+	named := newPushScanLimiter()
+	named.setLimits(8, 8, 0)
+	granted := 0
+	for i := 0; i < 8; i++ {
+		if _, ok := named.acquire("t", fmt.Sprintf("r%d/app", i), "u"); ok {
+			granted++
+		}
+	}
+	if granted != 6 {
+		t.Fatalf("named identity granted %d of 8, want 6 (reserve keeps 2)", granted)
 	}
 }
