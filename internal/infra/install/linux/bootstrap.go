@@ -60,6 +60,11 @@ type BootstrapReceipt struct {
 	Mode        string   `json:"mode"`
 	Paths       []string `json:"paths"`
 	ServiceName string   `json:"service_name"`
+	// CreatedPaths lists the entries of Paths that this setup run created
+	// (they did not exist before it started). Rollback removes only these.
+	// A receipt without the field (nil) comes from an older installer and is
+	// rolled back over every entry of Paths, as before.
+	CreatedPaths []string `json:"created_paths"`
 }
 
 type Bootstrapper struct {
@@ -85,7 +90,7 @@ func NewBootstrapper() *Bootstrapper {
 	return &Bootstrapper{
 		detector:  newDetector(),
 		mkdirAll:  os.MkdirAll,
-		writeFile: os.WriteFile,
+		writeFile: writeFileAtomic,
 		readFile:  os.ReadFile,
 		stat:      os.Stat,
 		rename:    os.Rename,
@@ -244,16 +249,31 @@ func (b *Bootstrapper) Run(ctx context.Context, cfg BootstrapConfig) error {
 		return err
 	}
 
-	if err := b.writeSetupArtifacts(plan, receipt); err != nil {
+	// Refuse before anything is written: setup never runs over an existing
+	// install, so everything below starts from a location it may own.
+	if err := ensureFreshInstall(plan); err != nil {
 		return err
+	}
+	if !cfg.NoStart {
+		// Probe the bind before writing, so an occupied address leaves nothing
+		// behind and the suggested rerun is not refused as an existing install.
+		if err := b.preflightLocalBind(cfg); err != nil {
+			return err
+		}
+	}
+
+	receipt.CreatedPaths, err = missingPaths(receipt.Paths)
+	if err != nil {
+		return err
+	}
+	if err := b.writeSetupArtifacts(plan, receipt); err != nil {
+		// A partial write is cleaned up (only what this run created), so the
+		// next attempt is not refused by its own leftovers.
+		return errors.Join(err, b.removeCreatedPaths(receipt))
 	}
 
 	if cfg.NoStart {
 		return nil
-	}
-
-	if err := b.preflightLocalBind(cfg); err != nil {
-		return err
 	}
 
 	rollbackErr := func(runErr error) error {
@@ -275,6 +295,20 @@ func (b *Bootstrapper) Run(ctx context.Context, cfg BootstrapConfig) error {
 	}
 
 	return nil
+}
+
+// CheckFreshInstall reports whether cfg describes a location setup may write
+// to. It touches nothing: setup calls it before any side effect (including the
+// auth bootstrap) and Run repeats it as a guard of its own.
+func (b *Bootstrapper) CheckFreshInstall(cfg BootstrapConfig) error {
+	if err := ValidateConfig(cfg); err != nil {
+		return err
+	}
+	plan, _, _, err := b.plan(cfg)
+	if err != nil {
+		return err
+	}
+	return ensureFreshInstall(plan)
 }
 
 func (b *Bootstrapper) preflightLocalBind(cfg BootstrapConfig) error {
@@ -416,8 +450,13 @@ func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt Bootstr
 		return fmt.Errorf("write service unit: %w", err)
 	}
 	if createDatabase {
-		if err := b.writeFile(plan.DatabasePath, []byte{}, 0o644); err != nil {
+		// An existing (empty) database file is left alone, never truncated.
+		if exists, err := b.pathExists(plan.DatabasePath); err != nil {
 			return fmt.Errorf("create SQLite database file: %w", err)
+		} else if !exists {
+			if err := b.writeFile(plan.DatabasePath, []byte{}, 0o644); err != nil {
+				return fmt.Errorf("create SQLite database file: %w", err)
+			}
 		}
 	}
 
@@ -458,8 +497,26 @@ func (b *Bootstrapper) rollbackWithReceipt(ctx context.Context, receipt Bootstra
 		errs = append(errs, fmt.Errorf("systemctl disable --now %s.service: %w", receipt.ServiceName, err))
 	}
 
-	for i := len(receipt.Paths) - 1; i >= 0; i-- {
-		for _, path := range sqliteCleanupPaths(receipt.Paths[i]) {
+	if err := b.removeCreatedPaths(receipt); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+// removeCreatedPaths removes what the setup run that wrote receipt created, in
+// reverse order. Paths that existed before that run (CreatedPaths omits them)
+// are never removed. A receipt from an older installer has no CreatedPaths and
+// is removed in full, as before.
+func (b *Bootstrapper) removeCreatedPaths(receipt BootstrapReceipt) error {
+	paths := receipt.CreatedPaths
+	if paths == nil {
+		paths = receipt.Paths
+	}
+
+	var errs []error
+	for i := len(paths) - 1; i >= 0; i-- {
+		for _, path := range sqliteCleanupPaths(paths[i]) {
 			if err := b.removeAll(path); err != nil {
 				errs = append(errs, fmt.Errorf("remove %s: %w", path, err))
 			}
