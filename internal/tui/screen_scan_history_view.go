@@ -216,7 +216,7 @@ func (s scanHistoryScreen) renderList(theme adminTheme, width, visible int, stat
 	table := renderScanTable(theme, specs, rows, cursor, visible, width, s.notice(theme, inner))
 	foot := theme.muted.Render(grantTruncate(hint, width))
 	if strings.TrimSpace(status) != "" && !m.Loading && m.Error == "" {
-		foot = theme.warning.Render(grantTruncate(status, width))
+		foot = theme.warning.Render(grantTruncate(sanitizeDisplay(status), width))
 	}
 	return table, foot
 }
@@ -227,7 +227,7 @@ func (s scanHistoryScreen) notice(theme adminTheme, inner int) []string {
 	leaks := s.activeKind() == adminScanHistoryTabLeaks
 	switch {
 	case strings.TrimSpace(m.Error) != "":
-		return []string{theme.error.Render(grantTruncate("Could not read scan history: "+m.Error, inner))}
+		return []string{theme.error.Render(grantTruncate(sanitizeDisplay("Could not read scan history: "+m.Error), inner))}
 	case len(m.Runs) == 0 && m.Loading:
 		return []string{theme.muted.Render("Reading scan history…")}
 	case len(m.Runs) == 0:

@@ -363,23 +363,89 @@ func BenchmarkAggregatorRecordLoginFailure(b *testing.B) {
 	})
 }
 
-func TestAggregatorSustains100kFailuresPerSecond(t *testing.T) {
+// enteredStore signals once a store call is in flight, so a test knows the
+// flush is parked inside the (blocked) store.
+type enteredStore struct {
+	fakeFailureStore
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (s *enteredStore) AddLoginFailures(ctx context.Context, records []ports.LoginFailureRecord) error {
+	s.once.Do(func() { close(s.entered) })
+	return s.fakeFailureStore.AddLoginFailures(ctx, records)
+}
+
+// The recorder must never wait for the store, keep its memory bounded and lose
+// no count. The properties are structural (no wall-clock speed under race or
+// load); BenchmarkAggregatorRecordLoginFailure carries the precise number.
+func TestAggregatorRecordingNeverBlocksOnStoreAndStaysBounded(t *testing.T) {
 	t.Parallel()
-	agg := NewLoginFailureAggregator(&fakeFailureStore{}, LoginFailureOptions{})
+	const (
+		goroutines = 8
+		perG       = 25_000
+		maxKeys    = 300
+		accounts   = 500
+	)
+	store := &enteredStore{fakeFailureStore: fakeFailureStore{block: make(chan struct{})}, entered: make(chan struct{})}
+	agg := NewLoginFailureAggregator(store, LoginFailureOptions{MaxKeys: maxKeys})
+
+	// Park a flush inside the store: it holds flushMu and waits on block.
+	agg.RecordLoginFailure(obs(aggBase, "seed"))
+	flushed := make(chan error, 1)
+	go func() { flushed <- agg.Flush(context.Background()) }()
+	select {
+	case <-store.entered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the flush never reached the store")
+	}
+
 	start := time.Now()
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
+	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
-		go func(g int) {
+		go func() {
 			defer wg.Done()
-			for i := 0; i < 25_000; i++ {
-				agg.RecordLoginFailure(obs(aggBase, fmt.Sprintf("hash:%d", i%500)))
+			for i := 0; i < perG; i++ {
+				agg.RecordLoginFailure(obs(aggBase, fmt.Sprintf("hash:%d", i%accounts)))
 			}
-		}(g)
+		}()
 	}
-	wg.Wait()
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("200k adds took %v, want well under 100k/s budget", elapsed)
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		t.Fatal("recording is blocked while a store flush is hung")
+	}
+	elapsed := time.Since(start)
+
+	stats := agg.Stats()
+	if stats.Live > maxKeys+1 { // the cap plus the single overflow key
+		t.Fatalf("live keys = %d, want at most %d", stats.Live, maxKeys+1)
+	}
+	if stats.Overflowed == 0 {
+		t.Fatal("overflowed = 0, want the key cap to have absorbed failures")
+	}
+	if stats.Pending != 0 || stats.Dropped != 0 {
+		t.Fatalf("pending = %d dropped = %d, want none while the flush is only slow", stats.Pending, stats.Dropped)
+	}
+	if !raceEnabled && elapsed > 10*time.Second {
+		// Measured in milliseconds without the race detector; this only catches
+		// an accidental slow path, with a budget machine load cannot reach.
+		t.Fatalf("200k adds took %v, want far below 10s", elapsed)
+	}
+
+	// Release the store: the parked flush and a second one persist every count.
+	close(store.block)
+	if err := <-flushed; err != nil {
+		t.Fatalf("parked flush error = %v", err)
+	}
+	if err := agg.Flush(context.Background()); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if want := int64(goroutines*perG + 1); store.total() != want {
+		t.Fatalf("persisted = %d, want exactly %d", store.total(), want)
 	}
 }
 

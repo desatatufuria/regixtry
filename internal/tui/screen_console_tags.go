@@ -196,14 +196,17 @@ func (s consoleTagsScreen) updateKey(env screenEnv, msg keyMsg) (adminScreen, te
 // repository and tag are captured here, so the command deletes exactly what
 // the dialog names whatever the selection or the list does meanwhile.
 func (s consoleTagsScreen) deleteConfirm(tag appregixtry.TagDetails) confirmPrompt {
+	// name is the exact stored name the command deletes; shown is the same
+	// text made safe for a single-line display (a pusher chooses the name).
 	gen, repository, name := s.gen, s.repository, tag.Name
+	shown := sanitizeDisplay(name)
 	return newConfirmPrompt(
-		"Delete tag "+name,
+		"Delete tag "+shown,
 		fmt.Sprintf("The tag is removed from %s. Its manifest stays, untagged, with the signatures and referrers attached to it.", repository),
 		"delete",
-		fmt.Sprintf("Deleting tag %s...", name),
+		fmt.Sprintf("Deleting tag %s...", shown),
 		func(env screenEnv) tea.Cmd { return tagDeleteCmd(env, gen, repository, name) },
-	).withTarget(repository+":"+name, tagDetail(tag)).withButtonLabel("Delete").
+	).withTarget(sanitizeDisplay(repository)+":"+shown, tagDetail(tag)).withButtonLabel("Delete").
 		withConsequence("Pulls by this tag stop working; pulls by digest keep working. Its other tags and the blobs stay. This cannot be undone.")
 }
 
@@ -297,7 +300,7 @@ func (s consoleTagsScreen) View(theme adminTheme, env screenEnv) screenFrame {
 			signed = theme.muted
 		}
 		spec.rows = append(spec.rows, []consoleCell{
-			{t.Name, theme.text}, {formatTagCreatedAt(t.CreatedAt), theme.text}, {tagPushedByLabel(t), theme.text}, {tagSignedLabel(t), signed},
+			{sanitizeDisplay(t.Name), theme.text}, {formatTagCreatedAt(t.CreatedAt), theme.text}, {tagPushedByLabel(t), theme.text}, {tagSignedLabel(t), signed},
 		})
 	}
 	status := consoleStatusLine(theme, s.confirm, s.notice, s.noticeFail, bodyW)

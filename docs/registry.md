@@ -22,6 +22,8 @@ docker pull registry.example.com/team/my-image:latest
 
 Resolution accepts either a tag or a digest. Blobs and manifests respond to `GET` and `HEAD`.
 
+Publishing a manifest refuses a reference that contains a control character (a newline, tab, escape, DEL, a C1 control, or a line or paragraph separator) with a validation error. Nothing else about tag names is checked, so every other tag is accepted as before.
+
 ## Routes
 
 | Method | Endpoint | Purpose |

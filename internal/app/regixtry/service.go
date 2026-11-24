@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
@@ -786,10 +787,22 @@ func (s *Service) authorizeDeleteRepository(ctx context.Context, repository stri
 	return domainauth.NewForbiddenError("repository administrator privileges are required")
 }
 
+// isReferenceControl reports C0, DEL and C1 controls plus the Unicode line and
+// paragraph separators.
+func isReferenceControl(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
 func parseManifestPayload(reference string, mediaType string, payload []byte) (domain.Manifest, string, error) {
 	reference = strings.TrimSpace(reference)
 	if reference == "" {
 		return domain.Manifest{}, "", domain.NewValidationError("manifest reference is required")
+	}
+	// The reference becomes a stored tag name that clients draw back, so a
+	// control character in it (a newline splits a table row) is refused. Only
+	// controls: the tag grammar is not enforced, ordinary tags are unchanged.
+	if strings.IndexFunc(reference, isReferenceControl) >= 0 {
+		return domain.Manifest{}, "", domain.NewValidationError("manifest reference must not contain control characters")
 	}
 
 	var envelope manifestEnvelope
@@ -838,8 +851,14 @@ func parseManifestPayload(reference string, mediaType string, payload []byte) (d
 // isReferrerArtifactPush reports whether this push is a cosign referrer
 // artifact -- a signature, attestation, or SBOM pointing at another
 // manifest -- never a primary artifact a push-triggered scan should ever
-// attempt against. Two signals, either sufficient on its own, mirror the
-// two real shapes cosign v3 pushes for one signing operation:
+// attempt against.
+//
+// The manifest CONTENT decides first (looksLikeReferrerArtifact): subject
+// and tag are chosen by the pusher, so on their own they must never opt an
+// image out of the push scan, which is the only automatic scan an untagged
+// digest gets and what the pull-time vulnerability policy relies on. Only a
+// content-verified referrer is then skipped, on either of two signals that
+// mirror the two real shapes cosign v3 pushes for one signing operation:
 //
 //  1. manifest.Subject != nil: the OCI 1.1-native referrer manifest (the
 //     bundle-referrer manifest itself, and legacy `.sig` manifests).
@@ -850,6 +869,9 @@ func parseManifestPayload(reference string, mediaType string, payload []byte) (d
 //     only a "manifests" array pointing at the referrer manifest above by
 //     digest, so Subject alone misses it entirely.
 func isReferrerArtifactPush(manifest domain.Manifest, tag string) bool {
+	if !looksLikeReferrerArtifact(manifest) {
+		return false
+	}
 	if manifest.Subject != nil {
 		return true
 	}
@@ -863,6 +885,92 @@ func isReferrerArtifactPush(manifest domain.Manifest, tag string) bool {
 	}
 	if bundleTag, err := signing.BundleIndexTag(digest); err == nil && bundleTag == tag {
 		return true
+	}
+	return false
+}
+
+// looksLikeReferrerArtifact reports whether the manifest's own content is
+// that of a signature, attestation, SBOM or Sigstore bundle, and never of
+// something that carries real content:
+//
+//   - every layer must be a known referrer payload type, whatever the
+//     artifactType or config media type claim: those are free-form pusher
+//     input, and any other layer (image tar, octet-stream, gzip, ...) is
+//     real content that must be scanned;
+//   - an image index qualifies only when it has entries and every entry's
+//     artifactType is a known referrer type (the Sigstore bundle index);
+//   - a manifest with layers then qualifies on those layers alone (a legacy
+//     cosign `.sig` manifest keeps the ordinary image config but carries only
+//     simple-signing layers); a manifest with no layers qualifies through a
+//     known artifactType or config media type (the OCI empty descriptor
+//     included).
+//
+// Everything else, including a manifest with an unknown or missing type, is
+// scanned. Layers labelled with a referrer type that hold other content
+// cannot be told apart by metadata; that limit is documented in
+// docs/security.md.
+func looksLikeReferrerArtifact(manifest domain.Manifest) bool {
+	for _, layer := range manifest.Layers {
+		if !isReferrerMediaType(layer.MediaType) {
+			return false
+		}
+	}
+
+	var index struct {
+		Manifests []struct {
+			ArtifactType string `json:"artifactType"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(manifest.Payload, &index); err != nil {
+		return false
+	}
+	if len(index.Manifests) > 0 {
+		for _, entry := range index.Manifests {
+			if !isReferrerMediaType(entry.ArtifactType) {
+				return false
+			}
+		}
+		return true
+	}
+
+	if len(manifest.Layers) > 0 {
+		return true
+	}
+	if isReferrerMediaType(manifest.ArtifactType) {
+		return true
+	}
+	return manifest.Config != nil && isReferrerMediaType(manifest.Config.MediaType)
+}
+
+// referrerMediaTypePrefixes lists the artifact, config and layer media types
+// of genuine referrer artifacts: cosign (simple signing, artifact
+// signature/SBOM/attestation), Sigstore bundles, in-toto and DSSE, SPDX and
+// CycloneDX SBOMs, Syft, Notary signatures (JOSE payload), and the OCI empty
+// descriptor.
+var referrerMediaTypePrefixes = []string{
+	signing.SimpleSigningMediaType,
+	"application/vnd.dev.cosign.",
+	"application/vnd.dev.sigstore.bundle",
+	"application/vnd.in-toto",
+	"application/vnd.dsse.envelope.",
+	"application/spdx",
+	"text/spdx",
+	"application/vnd.cyclonedx",
+	"application/vnd.syft",
+	"application/vnd.cncf.notary.",
+	"application/jose+json",
+	"application/vnd.oci.empty.v1+json",
+}
+
+func isReferrerMediaType(mediaType string) bool {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if mediaType == "" {
+		return false
+	}
+	for _, prefix := range referrerMediaTypePrefixes {
+		if strings.HasPrefix(mediaType, prefix) {
+			return true
+		}
 	}
 	return false
 }

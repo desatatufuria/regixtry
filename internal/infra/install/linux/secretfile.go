@@ -55,11 +55,91 @@ func (b *Bootstrapper) secretWriter() func(string, []byte, os.FileMode) error {
 	return writeSecretFile
 }
 
-var (
-	keywordPasswordPattern = regexp.MustCompile(`(?i)(\bpassword\s*=\s*)('(?:[^'\\]|\\.)*'|(?:\\.|[^\s\\'"])+)`)
-	// keywordPasswordAny finds every password key, however its value is written.
-	keywordPasswordAny = regexp.MustCompile(`(?i)\bpassword\s*=`)
-)
+// keywordPasswordAny finds every password key, however its value is written.
+var keywordPasswordAny = regexp.MustCompile(`(?i)\bpassword[ \t\n\v\f\r]*=`)
+
+const dsnSpace = " \t\n\v\f\r"
+
+// redactKeywordValueDSN masks every password value of a keyword/value DSN. It
+// reads the string with the grammar of pgx and libpq: a key runs to the next
+// "=", whitespace around "=" is ignored, a value starting with a single quote
+// runs to the next unescaped single quote, and any other value runs to the first
+// unescaped whitespace, keeping embedded quotes as literal characters. A
+// backslash escapes whatever follows it. Text outside password values is copied
+// unchanged. It reports false when the string does not parse under that grammar
+// or a password value is empty, so the caller can record nothing instead of a
+// possibly partial secret. It also returns how many password values it masked.
+func redactKeywordValueDSN(dsn string) (string, int, bool) {
+	var out strings.Builder
+	masked := 0
+	i, n := 0, len(dsn)
+	for i < n {
+		eq := strings.IndexByte(dsn[i:], '=')
+		if eq < 0 {
+			return "", 0, false
+		}
+		key := strings.Trim(dsn[i:i+eq], dsnSpace)
+		if strings.ContainsAny(key, dsnSpace) {
+			return "", 0, false
+		}
+		isPassword := strings.EqualFold(key, "password")
+		valStart := i + eq + 1
+		for valStart < n && strings.IndexByte(dsnSpace, dsn[valStart]) >= 0 {
+			valStart++
+		}
+		out.WriteString(dsn[i:valStart])
+		if valStart == n {
+			if isPassword {
+				return "", 0, false
+			}
+			break
+		}
+		valEnd := valStart
+		if dsn[valStart] != '\'' {
+			for ; valEnd < n && strings.IndexByte(dsnSpace, dsn[valEnd]) < 0; valEnd++ {
+				if dsn[valEnd] == '\\' {
+					valEnd++
+				}
+			}
+			valEnd = min(valEnd, n)
+		} else {
+			valEnd++
+			for ; valEnd < n && dsn[valEnd] != '\''; valEnd++ {
+				if dsn[valEnd] == '\\' {
+					valEnd++
+				}
+			}
+			if valEnd >= n {
+				return "", 0, false
+			}
+			valEnd++
+		}
+		if isPassword {
+			out.WriteString(redactedPassword)
+			masked++
+		} else {
+			out.WriteString(dsn[valStart:valEnd])
+		}
+		next := valEnd
+		for next < n && strings.IndexByte(dsnSpace, dsn[next]) >= 0 {
+			next++
+		}
+		out.WriteString(dsn[valEnd:next])
+		i = next
+	}
+	return out.String(), masked, true
+}
+
+var urlSchemePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+
+// isURLDSN reports whether dsn is a URL. pgx reads a string as a URL only when it
+// starts with postgres:// or postgresql://; a keyword/value DSN may carry "://"
+// inside a value and must not be taken for one. Any other leading scheme is
+// also treated as a URL, so a userinfo password in it is still masked rather
+// than left in place.
+func isURLDSN(dsn string) bool {
+	return urlSchemePattern.MatchString(dsn)
+}
 
 // RedactDSN masks the password of a Postgres DSN (URL or keyword/value form)
 // so the remainder can be recorded in world-readable metadata.
@@ -68,7 +148,7 @@ func RedactDSN(dsn string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if strings.Contains(trimmed, "://") {
+	if isURLDSN(trimmed) {
 		u, err := url.Parse(trimmed)
 		if err != nil {
 			return "[redacted]"
@@ -85,11 +165,15 @@ func RedactDSN(dsn string) string {
 		}
 		return u.String()
 	}
-	redacted := keywordPasswordPattern.ReplaceAllString(trimmed, "${1}"+redactedPassword)
-	// Every password key must have been recognised and masked (a double-quoted
-	// or otherwise unsupported value would leave a fragment behind); if not,
-	// record nothing rather than a partial secret.
-	if len(keywordPasswordAny.FindAllString(trimmed, -1)) != len(keywordPasswordPattern.FindAllString(trimmed, -1)) {
+	if len(keywordPasswordAny.FindAllStringIndex(trimmed, -1)) == 0 {
+		return trimmed
+	}
+	// Record nothing rather than a partial secret when the string does not parse
+	// as keyword/value pairs (an unterminated quote, text after a double-quoted
+	// value that pgx reads as a bare key) or when a "password=" is left over
+	// inside another key's value.
+	redacted, masked, ok := redactKeywordValueDSN(trimmed)
+	if !ok || masked != len(keywordPasswordAny.FindAllStringIndex(trimmed, -1)) {
 		return "[redacted]"
 	}
 	return redacted

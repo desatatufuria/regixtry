@@ -453,3 +453,33 @@ func TestBootstrapperUninstallReturnsFailuresInReport(t *testing.T) {
 		t.Fatalf("items = %#v, want managed path failure recorded", report.Items)
 	}
 }
+
+func TestWriteLifecycleProvenanceNeverPersistsQuotedPasswordFragment(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	plan := secretTestPlan(root)
+	plan.AuthPostgresDSN = "host=db user=u password=ab'cdEFG dbname=d"
+	if err := os.MkdirAll(filepath.Dir(plan.StatePath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	provenance := lifecycleProvenanceFromPlan(plan, bootstrapReceiptFromPlan(plan))
+	b := &Bootstrapper{mkdirAll: os.MkdirAll, writeFile: os.WriteFile}
+
+	if err := b.writeLifecycleProvenance(provenance); err != nil {
+		t.Fatalf("writeLifecycleProvenance() error = %v", err)
+	}
+
+	body, err := os.ReadFile(lifecycleProvenancePath(plan.StatePath))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, frag := range []string{"cdEFG", "'cd", "ab'"} {
+		if strings.Contains(string(body), frag) {
+			t.Fatalf("provenance leaks %q of the password:\n%s", frag, body)
+		}
+	}
+	if !strings.Contains(string(body), "host=db user=u password=xxxxx dbname=d") {
+		t.Fatalf("provenance does not carry the masked DSN:\n%s", body)
+	}
+}
