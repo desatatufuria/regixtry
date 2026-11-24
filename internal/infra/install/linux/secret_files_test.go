@@ -376,6 +376,47 @@ func TestRedactDSNKeywordValueFollowsPgxGrammar(t *testing.T) {
 	}
 }
 
+// TestRedactDSNPicksTheFormByScheme: only a string that starts with a postgres
+// or postgresql scheme is a URL. A keyword/value DSN may carry "://" inside a
+// value, and must not be read as a schemeless URL that u.String() returns as is.
+func TestRedactDSNPicksTheFormByScheme(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+		leak []string
+	}{
+		{"slash then scheme-like text in a later value", "host=/var/run/postgresql password=s opt=a://b", "host=/var/run/postgresql password=xxxxx opt=a://b", []string{"password=s "}},
+		{"slash and scheme-like text inside the password", "password=a/b://cdEFG", "password=xxxxx", []string{"cdEFG", "a/b"}},
+		{"scheme-like text inside the password after a socket host", "host=/tmp password=ab://cdEFG dbname=d", "host=/tmp password=xxxxx dbname=d", []string{"cdEFG", "ab:"}},
+		{"url with encoded password", "postgres://u:p%40ss@h:5432/db", "postgres://u:xxxxx@h:5432/db", []string{"p%40ss", "ss@"}},
+		{"postgresql scheme", "postgresql://u:pwEFG@h/db", "postgresql://u:xxxxx@h/db", []string{"pwEFG"}},
+		{"uppercase scheme", "POSTGRES://u:pwEFG@h/db", "postgres://u:xxxxx@h/db", []string{"pwEFG"}},
+		{"leading space before a url", "  postgres://u:pwEFG@h/db", "postgres://u:xxxxx@h/db", []string{"pwEFG"}},
+		{"url password in the query", "postgres://h/db?password=pwEFG", "postgres://h/db?password=xxxxx", []string{"pwEFG"}},
+		{"unparsable url fails closed", "postgres://u:pw EFG@h/db", "[redacted]", []string{"EFG"}},
+		{"other scheme still masks the userinfo password", "mysql://u:pwEFG@h/db", "mysql://u:xxxxx@h/db", []string{"pwEFG"}},
+		{"keyword value without a password is untouched", "host=h options=a://b", "host=h options=a://b", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := RedactDSN(tt.in)
+			if got != tt.want {
+				t.Errorf("RedactDSN(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+			for _, frag := range tt.leak {
+				if strings.Contains(got, frag) {
+					t.Errorf("RedactDSN(%q) = %q leaks %q", tt.in, got, frag)
+				}
+			}
+		})
+	}
+}
+
 func TestRedactDSNNeverLeaksFragments(t *testing.T) {
 	t.Parallel()
 

@@ -130,6 +130,17 @@ func redactKeywordValueDSN(dsn string) (string, int, bool) {
 	return out.String(), masked, true
 }
 
+var urlSchemePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*://`)
+
+// isURLDSN reports whether dsn is a URL. pgx reads a string as a URL only when it
+// starts with postgres:// or postgresql://; a keyword/value DSN may carry "://"
+// inside a value and must not be taken for one. Any other leading scheme is
+// also treated as a URL, so a userinfo password in it is still masked rather
+// than left in place.
+func isURLDSN(dsn string) bool {
+	return urlSchemePattern.MatchString(dsn)
+}
+
 // RedactDSN masks the password of a Postgres DSN (URL or keyword/value form)
 // so the remainder can be recorded in world-readable metadata.
 func RedactDSN(dsn string) string {
@@ -137,7 +148,7 @@ func RedactDSN(dsn string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if strings.Contains(trimmed, "://") {
+	if isURLDSN(trimmed) {
 		u, err := url.Parse(trimmed)
 		if err != nil {
 			return "[redacted]"
