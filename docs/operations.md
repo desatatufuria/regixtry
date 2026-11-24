@@ -140,7 +140,11 @@ If the cause is a real attacker keeping one name in backoff, repeated resets onl
 
 ## Upgrade and rollback
 
-`upgrade` uses the setup provenance record, runs preflight checks, supports `--ref` and `--yes`, and shows progress. Bootstrap rollback removes generated artifacts and stops the service. Review the command output and `journalctl` before retrying.
+`upgrade` uses the setup provenance record, runs preflight checks, supports `--ref` and `--yes`, and shows progress. Bootstrap rollback stops the service and removes the artifacts its receipt lists as created by setup, which on a completed install includes the database and content store; it is an explicit teardown, so back up first. Review the command output and `journalctl` before retrying.
+
+`setup` (and `bootstrap`) is for a first install only. Before writing anything, including the auth bootstrap, it refuses to run when the metadata database (`<storage-root>/metadata.db`) or the content store (`<storage-root>/content`) already holds data, or when a unit, env file, bootstrap receipt or lifecycle provenance file from a previous install exists. The error names the path and points at `regixtry upgrade`; nothing is written, truncated or removed. An empty database file or content directory does not count as data. To redo an incomplete install (for example one left by `setup --no-start`), run `regixtry bootstrap --rollback --state-path <path>` first, or run `regixtry upgrade` to move a complete one.
+
+A failed setup removes only what that run created (the bootstrap receipt records them as `created_paths`); a database or content directory that existed before it is never removed. Receipts written by older versions, or rewritten by `upgrade`, have no `created_paths`, so an explicit `bootstrap --rollback` of one still removes every listed path. The unit, env, database and receipt files are written atomically (temporary file in the same directory, fsync, rename), so an interrupted setup cannot leave a truncated config. If the local bind address is already in use, setup stops before writing anything.
 
 ### Upgrade to the projects release
 

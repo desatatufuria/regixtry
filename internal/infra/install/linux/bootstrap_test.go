@@ -767,8 +767,10 @@ func TestBootstrapRunFailsBeforeServiceStartWhenLocalBindIsOccupied(t *testing.T
 	if probeCalls != 0 {
 		t.Fatalf("probeCalls = %d, want 0", probeCalls)
 	}
-	if _, statErr := os.Stat(statePath); statErr != nil {
-		t.Fatalf("expected state receipt to exist after preflight failure, stat error = %v", statErr)
+	// The bind is probed before anything is written, so the failed run leaves no
+	// receipt behind and the suggested rerun is not refused as an existing install.
+	if _, statErr := os.Stat(statePath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("state receipt exists after preflight failure, stat error = %v; want nothing written", statErr)
 	}
 }
 

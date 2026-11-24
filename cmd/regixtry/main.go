@@ -45,6 +45,7 @@ var openAuthStore = func(dsn string) (ports.AuthStore, error) {
 
 type bootstrapRunner interface {
 	Run(context.Context, installlinux.BootstrapConfig) error
+	CheckFreshInstall(installlinux.BootstrapConfig) error
 	Rollback(context.Context, installlinux.BootstrapConfig) error
 	Uninstall(context.Context, string) (installlinux.UninstallReport, error)
 	Upgrade(context.Context, installlinux.UpgradeConfig) (installlinux.UpgradeResult, error)
@@ -965,7 +966,7 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	defaultPublicURL := os.Getenv("REGISTRY_PUBLIC_URL")
 	defaultAuthPostgresDSN := os.Getenv("REGISTRY_AUTH_POSTGRES_DSN")
 	cfg := setupConfig{}
-	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite or binary-only)")
+	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite, docker or binary-only); daemon-sqlite refuses to run over an existing install and never overwrites or removes its data -- use `regixtry upgrade` to move one")
 	flags.StringVar(&cfg.PublicURL, "public-url", defaultPublicURL, "canonical public URL advertised to registry clients")
 	flags.StringVar(&cfg.RuntimeTLSMode, "runtime-tls-mode", "", "runtime TLS mode (local-http, reverse-proxy, or direct-tls)")
 	flags.StringVar(&cfg.TLSCertFile, "tls-cert-file", os.Getenv("REGISTRY_TLS_CERT_FILE"), "path to the TLS certificate PEM file for direct-tls mode")
@@ -1444,12 +1445,18 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			return err
 		}
 
+		// Refuse an existing install before any side effect, the auth bootstrap
+		// included: setup never overwrites or removes data, `upgrade` moves it.
+		runner := newBootstrapRunner()
+		if err := runner.CheckFreshInstall(cfg.BootstrapConfig); err != nil {
+			return err
+		}
+
 		authOutcome, err := bootstrapSetupAuth(ctx, cfg.Auth)
 		if err != nil {
 			return err
 		}
 
-		runner := newBootstrapRunner()
 		if err := runner.Run(ctx, cfg.BootstrapConfig); err != nil {
 			return upgradeLifecyclePermissionError(err, "daemon-sqlite setup", formatSetupCommand(cfg.BootstrapConfig, false))
 		}
