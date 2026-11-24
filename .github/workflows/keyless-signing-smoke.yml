@@ -21,13 +21,16 @@ name: keyless-signing-smoke
 #
 # SECURITY: this workflow uses no LIVE_REGISTRY_* secrets (it targets an
 # ephemeral in-job instance), but it mints a real OIDC identity token that
-# signs permanent public Rekor entries as this repository. It therefore has the
-# same ref guard as the live-verify workflows: the `ref-guard` job fails with an
-# explicit message unless the run was dispatched from `develop` or a `v*` tag,
-# and the signing job `needs` it. This REDUCES the risk but does not remove it:
-# whatever is on `develop` (or on a `v*` tag) is still what runs, so branch
-# protection on `develop` and tag protection for `v*` are the other half. See
-# docs/ci-cd.md, "Live verification workflows".
+# signs permanent public Rekor entries as this repository. It has the same
+# ref guard as the live-verify workflows -- a safeguard against ACCIDENTAL
+# dispatch only: the `ref-guard` job fails with an explicit message unless the
+# run was dispatched from `develop` or a `v*` tag, and the signing job `needs`
+# it. It is NOT a control against a malicious repository writer: GitHub reads
+# this workflow file from the dispatched ref, so anyone who can push a branch
+# can delete the guard from their copy and dispatch from that branch. Branch
+# protection on `develop` and tag protection for `v*` (also relevant to
+# release.yml) are repository-owner settings that cannot be done from code.
+# See docs/ci-cd.md, "Live verification workflows".
 on:
   workflow_dispatch: {}
 

@@ -39,22 +39,25 @@ name: helm-oci-live-verify
 # public-transparency-log concerns that shape its keyless sibling.
 #
 # SECURITY: this job hands production ADMIN credentials (LIVE_REGISTRY_*) to a
-# script that is read from the dispatched ref. Two controls apply:
+# script that is read from the dispatched ref.
 #
-#   1. Ref guard (in this file): the `ref-guard` job fails with an explicit
-#      message unless the run was dispatched from `develop` or a `v*` tag, and
-#      the live job `needs` it. A dispatch from any other branch therefore
-#      never reaches the secrets. This REDUCES the risk but does not remove it:
-#      whatever is on `develop` (or on a `v*` tag) is still what runs, so
-#      branch protection on `develop` and tag protection for `v*` are the other
-#      half of this control.
-#   2. REPOSITORY OWNER ACTION (cannot be done from code): move the
-#      LIVE_REGISTRY_HOST/USERNAME/PASSWORD secrets out of repository-level
-#      secrets and into a protected GitHub Environment configured with
-#      required reviewers (and a deployment-branch restriction), then
-#      reference that environment from the live job. Until the owner does
-#      this, the secrets remain repository-level. See docs/ci-cd.md,
-#      "Live verification workflows".
+#   1. Ref guard (in this file) -- a safeguard against ACCIDENTAL dispatch
+#      only: the `ref-guard` job fails with an explicit message unless the run
+#      was dispatched from `develop` or a `v*` tag, and the live job `needs`
+#      it. It is NOT a control against a malicious repository writer: GitHub
+#      reads this workflow file from the dispatched ref, so anyone who can
+#      push a branch can delete the guard from their copy and dispatch from
+#      that branch with the repo-level secrets in scope.
+#   2. REPOSITORY OWNER ACTION -- the real control, which cannot be done from
+#      code: move the LIVE_REGISTRY_HOST/USERNAME/PASSWORD secrets out of
+#      repository-level secrets into a GitHub Environment with required
+#      reviewers and a deployment branch/tag rule limited to `develop` and
+#      `v*` tags. Only once the owner has created it, add an `environment:`
+#      key naming it to the live job below (not added now: an unknown name
+#      auto-creates an unprotected environment). Until then nothing here
+#      protects the secrets from a repository writer. Branch protection on
+#      `develop` and tag protection for `v*` (also relevant to release.yml)
+#      are needed as well. See docs/ci-cd.md, "Live verification workflows".
 on:
   workflow_dispatch:
     inputs:
