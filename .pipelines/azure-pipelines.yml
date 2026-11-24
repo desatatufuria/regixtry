@@ -6,6 +6,16 @@
 trigger:
 - develop
 
+# This pipeline runs on a self-hosted pool (dtf-deploy), i.e. on an
+# organization-owned machine. When `pr:` is omitted, Azure Pipelines validates
+# pull requests for a GitHub-attached pipeline and reads this YAML from the PR
+# merge ref, so a PR author could rewrite `steps:` and run arbitrary commands
+# on that agent. Self-hosted agents must never run untrusted PR code, hence
+# PR validation is disabled here. (Also review the pipeline's fork-build
+# settings and the pool's approval checks in Azure DevOps; those are not
+# controlled from this file.)
+pr: none
+
 pool:
   name: dtf-deploy
 
