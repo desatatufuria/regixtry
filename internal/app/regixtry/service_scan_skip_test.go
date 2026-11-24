@@ -167,6 +167,38 @@ func TestPublishManifestScansImageShapedManifestDespiteSubjectOrSignatureTag(t *
 		waitForRunnerTargets(t, f.runner, 2)
 	})
 
+	// A referrer-looking artifactType or config does not vouch for layers
+	// that are not referrer payloads: such a manifest carries real content.
+	for _, layerType := range []string{"application/octet-stream", "application/x-tar", "application/gzip"} {
+		t.Run("spoofed referrer type with "+layerType+" layer and a subject", func(t *testing.T) {
+			t.Parallel()
+
+			f := newScanSkipFixture(t)
+			payload := f.subjectManifest(signing.SigstoreBundleMediaType, ociEmptyType, layerType)
+			if _, err := f.service.PublishManifest(context.Background(), "library/skip", digestForTest(payload), ociImageManifestType, payload); err != nil {
+				t.Fatalf("PublishManifest() error = %v", err)
+			}
+
+			waitForRunnerTargets(t, f.runner, 2)
+		})
+
+		t.Run("cosign config with "+layerType+" layer under a signature tag", func(t *testing.T) {
+			t.Parallel()
+
+			f := newScanSkipFixture(t)
+			tag, err := signing.SignatureTag(f.image.Digest)
+			if err != nil {
+				t.Fatalf("signing.SignatureTag() error = %v", err)
+			}
+			payload := []byte(`{"schemaVersion":2,"mediaType":"` + ociImageManifestType + `","config":{"mediaType":"application/vnd.dev.cosign.artifact.sig.v1+json","digest":"` + f.blob + `","size":9},"layers":[{"mediaType":"` + layerType + `","digest":"` + f.blob + `","size":9}]}`)
+			if _, err := f.service.PublishManifest(context.Background(), "library/skip", tag, ociImageManifestType, payload); err != nil {
+				t.Fatalf("PublishManifest() error = %v", err)
+			}
+
+			waitForRunnerTargets(t, f.runner, 2)
+		})
+	}
+
 	t.Run("index without referrer entries under a bundle index tag", func(t *testing.T) {
 		t.Parallel()
 
@@ -315,6 +347,11 @@ func TestIsReferrerArtifactPushDecidesFromContent(t *testing.T) {
 		{"uppercase image layer type", manifest(subject, config(ociEmptyType), layers("Application/VND.OCI.Image.Layer.V1.Tar")), "v1", false},
 		{"subject with unknown artifact type and unknown config", manifest(`"artifactType":"application/vnd.example.thing"`, subject, config("application/vnd.example.cfg"), layers("application/octet-stream")), "v1", false},
 		{"subject with no config and no layers", manifest(subject), "v1", false},
+		{"referrer artifactType with octet-stream layer", manifest(`"artifactType":"`+signing.SigstoreBundleMediaType+`"`, subject, config(ociEmptyType), layers("application/octet-stream")), "v1", false},
+		{"referrer config with x-tar layer", manifest(subject, config("application/vnd.dev.cosign.artifact.sig.v1+json"), layers("application/x-tar")), "v1", false},
+		{"referrer config with gzip layer under the sig tag", manifest(config("application/vnd.dev.cosign.artifact.sig.v1+json"), layers("application/gzip")), sigTag, false},
+		{"referrer layer mixed with an unknown layer", manifest(`"artifactType":"`+signing.SigstoreBundleMediaType+`"`, subject, config(ociEmptyType), layers(signing.SigstoreBundleMediaType, "application/octet-stream")), "v1", false},
+		{"notary signature referrer", manifest(`"artifactType":"application/vnd.cncf.notary.signature"`, subject, config(ociEmptyType), layers("application/jose+json")), "v1", true},
 		{"sigstore bundle referrer", manifest(`"artifactType":"`+signing.SigstoreBundleMediaType+`"`, subject, config(ociEmptyType), layers(signing.SigstoreBundleMediaType)), "v1", true},
 		{"referrer by uppercase artifact type", manifest(`"artifactType":"Application/VND.In-Toto+json"`, subject, config(ociEmptyType)), "v1", true},
 		{"cyclonedx sbom referrer", manifest(subject, config(ociEmptyType), layers("application/vnd.cyclonedx+json")), "v1", true},

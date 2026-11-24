@@ -878,23 +878,27 @@ func isReferrerArtifactPush(manifest domain.Manifest, tag string) bool {
 
 // looksLikeReferrerArtifact reports whether the manifest's own content is
 // that of a signature, attestation, SBOM or Sigstore bundle, and never of
-// something that can be pulled and run as an image:
+// something that carries real content:
 //
-//   - any image layer media type (OCI or Docker tar, tar+gzip, tar+zstd,
-//     rootfs diff) means a real image, whatever its subject or tag say;
+//   - every layer must be a known referrer payload type, whatever the
+//     artifactType or config media type claim: those are free-form pusher
+//     input, and any other layer (image tar, octet-stream, gzip, ...) is
+//     real content that must be scanned;
 //   - an image index qualifies only when it has entries and every entry's
 //     artifactType is a known referrer type (the Sigstore bundle index);
-//   - any other manifest qualifies through a known artifactType, a known
-//     config media type (the OCI empty descriptor included), or layers that
-//     are all known referrer payload types (a legacy cosign `.sig` manifest
-//     keeps the ordinary image config but carries only simple-signing
-//     layers).
+//   - a manifest with layers then qualifies on those layers alone (a legacy
+//     cosign `.sig` manifest keeps the ordinary image config but carries only
+//     simple-signing layers); a manifest with no layers qualifies through a
+//     known artifactType or config media type (the OCI empty descriptor
+//     included).
 //
 // Everything else, including a manifest with an unknown or missing type, is
-// scanned.
+// scanned. Layers labelled with a referrer type that hold other content
+// cannot be told apart by metadata; that limit is documented in
+// docs/security.md.
 func looksLikeReferrerArtifact(manifest domain.Manifest) bool {
 	for _, layer := range manifest.Layers {
-		if isImageLayerMediaType(layer.MediaType) {
+		if !isReferrerMediaType(layer.MediaType) {
 			return false
 		}
 	}
@@ -916,36 +920,20 @@ func looksLikeReferrerArtifact(manifest domain.Manifest) bool {
 		return true
 	}
 
+	if len(manifest.Layers) > 0 {
+		return true
+	}
 	if isReferrerMediaType(manifest.ArtifactType) {
 		return true
 	}
-	if manifest.Config != nil && isReferrerMediaType(manifest.Config.MediaType) {
-		return true
-	}
-	if len(manifest.Layers) == 0 {
-		return false
-	}
-	for _, layer := range manifest.Layers {
-		if !isReferrerMediaType(layer.MediaType) {
-			return false
-		}
-	}
-	return true
-}
-
-// isImageLayerMediaType matches the OCI and Docker filesystem layer types
-// (tar, tar+gzip, tar+zstd, rootfs diff, and their foreign/nondistributable
-// variants), compared case-insensitively.
-func isImageLayerMediaType(mediaType string) bool {
-	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
-	return strings.HasPrefix(mediaType, "application/vnd.oci.image.layer.") ||
-		strings.HasPrefix(mediaType, "application/vnd.docker.image.rootfs.")
+	return manifest.Config != nil && isReferrerMediaType(manifest.Config.MediaType)
 }
 
 // referrerMediaTypePrefixes lists the artifact, config and layer media types
 // of genuine referrer artifacts: cosign (simple signing, artifact
 // signature/SBOM/attestation), Sigstore bundles, in-toto and DSSE, SPDX and
-// CycloneDX SBOMs, Syft, and the OCI empty descriptor.
+// CycloneDX SBOMs, Syft, Notary signatures (JOSE payload), and the OCI empty
+// descriptor.
 var referrerMediaTypePrefixes = []string{
 	signing.SimpleSigningMediaType,
 	"application/vnd.dev.cosign.",
@@ -956,6 +944,8 @@ var referrerMediaTypePrefixes = []string{
 	"text/spdx",
 	"application/vnd.cyclonedx",
 	"application/vnd.syft",
+	"application/vnd.cncf.notary.",
+	"application/jose+json",
 	"application/vnd.oci.empty.v1+json",
 }
 
