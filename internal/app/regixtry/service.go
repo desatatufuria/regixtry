@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	domainauth "regixtry/internal/domain/auth"
 	domain "regixtry/internal/domain/regixtry"
@@ -786,10 +787,22 @@ func (s *Service) authorizeDeleteRepository(ctx context.Context, repository stri
 	return domainauth.NewForbiddenError("repository administrator privileges are required")
 }
 
+// isReferenceControl reports C0, DEL and C1 controls plus the Unicode line and
+// paragraph separators.
+func isReferenceControl(r rune) bool {
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+}
+
 func parseManifestPayload(reference string, mediaType string, payload []byte) (domain.Manifest, string, error) {
 	reference = strings.TrimSpace(reference)
 	if reference == "" {
 		return domain.Manifest{}, "", domain.NewValidationError("manifest reference is required")
+	}
+	// The reference becomes a stored tag name that clients draw back, so a
+	// control character in it (a newline splits a table row) is refused. Only
+	// controls: the tag grammar is not enforced, ordinary tags are unchanged.
+	if strings.IndexFunc(reference, isReferenceControl) >= 0 {
+		return domain.Manifest{}, "", domain.NewValidationError("manifest reference must not contain control characters")
 	}
 
 	var envelope manifestEnvelope
