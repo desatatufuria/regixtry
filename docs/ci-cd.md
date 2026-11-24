@@ -32,6 +32,23 @@ So a release of `v1.2.3` produces `regixtry_1.2.3_linux_amd64.tar.gz`, `regixtry
 
 To cut a release: push a `v*` tag to the repository. There is no manual dispatch trigger and no pipeline for other operating systems or architectures.
 
+## Live verification workflows
+
+`.github/workflows/helm-oci-live-verify.yml`, `.github/workflows/keyless-signing-live-verify.yml` and `.github/workflows/keyless-signing-smoke.yml` are `workflow_dispatch`-only. The first two run against a real, already-running registry using the `LIVE_REGISTRY_HOST`, `LIVE_REGISTRY_USERNAME` and `LIVE_REGISTRY_PASSWORD` secrets, which are a production **admin** credential. The smoke workflow uses no registry secrets but mints a real OIDC identity token that signs permanent public Rekor entries as this repository. All three run `docs/verification/scripts/*.sh` from the dispatched ref, so whoever can dispatch a workflow on a branch they control can change what runs with those credentials.
+
+**Ref guard (in code).** Each workflow starts with a `ref-guard` job that fails with an explicit error unless the run was dispatched from `develop` or a `v*` tag; the real job `needs` it (and repeats the same condition in its own `if:`). A dispatch from any other branch never reaches the secrets or the OIDC token. The keyless workflows keep `permissions: id-token: write` because cosign needs it to obtain a Fulcio certificate; the guard job opts out with `permissions: {}`, and the rest of each workflow stays at `contents: read`.
+
+**This reduces the risk, it does not remove it.** Whatever is on `develop` or on a `v*` tag is still what runs, so these two settings are the other half of the control and must be configured on GitHub:
+
+- Branch protection on `develop` (required reviews, no direct pushes by untrusted writers).
+- Tag protection (a ruleset) for `v*`, since a writer could otherwise push a `v*` tag on an arbitrary commit and pass the guard.
+
+**Repository owner action (cannot be done from code).** Move the `LIVE_REGISTRY_HOST`, `LIVE_REGISTRY_USERNAME` and `LIVE_REGISTRY_PASSWORD` secrets from repository-level secrets into a protected GitHub Environment configured with required reviewers and a deployment-branch restriction, then reference that environment from the two live-verify jobs (an `environment:` key on the job). Until this is done the secrets stay repository-level and the ref guard is the only control. Also prefer a dedicated, least-privilege credential for these workflows over a full admin principal where the verification scripts allow it.
+
+## Azure Pipelines starter (`.pipelines/azure-pipelines.yml`)
+
+The checked-in pipeline runs on a self-hosted pool (`dtf-deploy`) and declares `pr: none`, so pull requests never trigger it: a self-hosted agent must not run untrusted PR code. Only pushes to `develop` trigger it. Pull-request and fork-build settings, and approval checks on the pool, are configured in Azure DevOps rather than in this file; keep fork builds disabled for this pipeline.
+
 ## Consumer pipelines
 
 The examples below assume a standard Docker login. With auth enabled, the registry implements the Bearer challenge and `/auth/token`, so no additional pipeline-side endpoint is required.

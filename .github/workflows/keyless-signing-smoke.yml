@@ -18,6 +18,16 @@ name: keyless-signing-smoke
 # short-lived OIDC identity token (via `permissions: id-token: write`) --
 # this job is the only place a genuine "keyless signature verifies
 # successfully" round trip can be proven end to end.
+#
+# SECURITY: this workflow uses no LIVE_REGISTRY_* secrets (it targets an
+# ephemeral in-job instance), but it mints a real OIDC identity token that
+# signs permanent public Rekor entries as this repository. It therefore has the
+# same ref guard as the live-verify workflows: the `ref-guard` job fails with an
+# explicit message unless the run was dispatched from `develop` or a `v*` tag,
+# and the signing job `needs` it. This REDUCES the risk but does not remove it:
+# whatever is on `develop` (or on a `v*` tag) is still what runs, so branch
+# protection on `develop` and tag protection for `v*` are the other half. See
+# docs/ci-cd.md, "Live verification workflows".
 on:
   workflow_dispatch: {}
 
@@ -25,11 +35,34 @@ permissions:
   contents: read
   # Required for cosign to obtain a real, short-lived GitHub Actions OIDC
   # identity token (its ambient-credential detector reads this
-  # automatically -- no extra cosign flag is needed for it).
+  # automatically -- no extra cosign flag is needed for it). This job
+  # genuinely needs it for Fulcio keyless signing: do not remove it. The
+  # `ref-guard` job below opts out with `permissions: {}`.
   id-token: write
 
 jobs:
+  # Runs with no checkout and no token permissions: its only purpose is to
+  # give a refused run a clear, visible reason instead of a silent skip.
+  ref-guard:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require develop or a v* tag
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          case "$REF" in
+            refs/heads/develop|refs/tags/v*) echo "ref allowed: $REF" ;;
+            *)
+              echo "::error::Refusing to run: this workflow signs with the repository's OIDC identity and may only be dispatched from 'develop' or a 'v*' tag (got: $REF)."
+              exit 1
+              ;;
+          esac
+
   keyless-signing-smoke:
+    needs: ref-guard
+    # Defense in depth: same condition as the guard step above.
+    if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
