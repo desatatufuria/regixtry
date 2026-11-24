@@ -67,6 +67,8 @@ type Bootstrapper struct {
 	mkdirAll       func(string, os.FileMode) error
 	writeFile      func(string, []byte, os.FileMode) error
 	writeSecret    func(string, []byte, os.FileMode) error
+	chmod          func(string, os.FileMode) error
+	warnf          func(string, ...any)
 	readFile       func(string) ([]byte, error)
 	stat           func(string) (os.FileInfo, error)
 	rename         func(string, string) error
@@ -86,6 +88,7 @@ func NewBootstrapper() *Bootstrapper {
 		detector:  newDetector(),
 		mkdirAll:  os.MkdirAll,
 		writeFile: os.WriteFile,
+		chmod:     os.Chmod,
 		readFile:  os.ReadFile,
 		stat:      os.Stat,
 		rename:    os.Rename,
@@ -400,11 +403,20 @@ func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt Bootstr
 	if err := ValidateEnvValues(plan); err != nil {
 		return err
 	}
-	for _, dir := range []string{filepath.Dir(plan.EnvPath), filepath.Dir(plan.UnitPath), plan.StorageRoot, plan.ContentPath} {
-		if strings.TrimSpace(dir) == "" {
+	dirModes := []struct {
+		dir  string
+		mode os.FileMode
+	}{
+		{filepath.Dir(plan.EnvPath), configDirMode},
+		{filepath.Dir(plan.UnitPath), configDirMode},
+		{plan.StorageRoot, storageDirMode},
+		{plan.ContentPath, storageDirMode},
+	}
+	for _, entry := range dirModes {
+		if strings.TrimSpace(entry.dir) == "" {
 			continue
 		}
-		if err := b.mkdirAll(dir, 0o755); err != nil {
+		if err := b.mkdirAll(entry.dir, entry.mode); err != nil {
 			return err
 		}
 	}
@@ -416,10 +428,12 @@ func (b *Bootstrapper) writeManagedArtifacts(plan BootstrapPlan, receipt Bootstr
 		return fmt.Errorf("write service unit: %w", err)
 	}
 	if createDatabase {
-		if err := b.writeFile(plan.DatabasePath, []byte{}, 0o644); err != nil {
+		if err := b.writeFile(plan.DatabasePath, []byte{}, databaseFileMode); err != nil {
 			return fmt.Errorf("create SQLite database file: %w", err)
 		}
 	}
+
+	b.tightenStorageAccess(plan)
 
 	return b.writeBootstrapReceipt(plan.StatePath, receipt)
 }

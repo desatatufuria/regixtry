@@ -109,7 +109,7 @@ Local TUI inspection is not, and was never designed to be, a third enforcement b
 - Prefer `-password-stdin` over `-password` for `bootstrap-admin`.
 - Do not expose PostgreSQL or the local HTTP listener without a controlled network boundary.
 - Use direct HTTPS or a TLS-terminating reverse proxy on untrusted networks.
-- Protect `regixtry.env`, bootstrap state, the SQLite database, and the blob filesystem.
+- Protect `regixtry.env`, bootstrap state, the SQLite database, and the blob filesystem. A local account that can read the blob store or `metadata.db` bypasses grant checks entirely. New storage is created with no access for other local users (directories `0750`, files `0640`, blobs `0440`), and `serve` warns once at startup when an existing storage root or `metadata.db` is world-readable or world-writable; see [the upgrade note](operations.md#upgrade-note-storage-permissions-local-users). The managed systemd unit runs as root; the daemon does not drop privileges.
 - Store an admin token's or robot's secret only at creation time — it cannot be retrieved again.
 - Treat local TUI access as equivalent to full read access to every repository in the registry; restrict who can reach it accordingly.
 
