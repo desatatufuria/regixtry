@@ -184,8 +184,8 @@ func TestCommittedBlobIsReadOnlyAndNeverReplaced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat blob: %v", err)
 	}
-	if before.Mode().Perm() != 0o444 {
-		t.Fatalf("blob mode = %v, want 0444", before.Mode().Perm())
+	if before.Mode().Perm() != 0o440 {
+		t.Fatalf("blob mode = %v, want 0440", before.Mode().Perm())
 	}
 
 	second := beginUpload(t, store)
@@ -390,8 +390,8 @@ func TestCommitFallsBackToVerifiedCopyWhenLinkFails(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stat blob: %v", err)
 			}
-			if info.Mode().Perm() != 0o444 {
-				t.Fatalf("blob mode = %v, want 0444", info.Mode().Perm())
+			if info.Mode().Perm() != 0o440 {
+				t.Fatalf("blob mode = %v, want 0440", info.Mode().Perm())
 			}
 			assertNoTempFiles(t, store, digest)
 			if _, err := os.Stat(store.uploadDir(upload.ID)); !os.IsNotExist(err) {

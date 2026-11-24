@@ -23,6 +23,21 @@ import (
 // WithMaxUploadSize overrides it (5 GiB).
 const DefaultMaxUploadSize int64 = 5 << 30
 
+// Modes of everything the store creates. None grants any access to "other"
+// local users (blob bytes bypass the HTTP authorization layer, so the
+// filesystem must not expose them); the group keeps read access so an
+// operator-run backup or scan account in the service group still works.
+// They apply only to newly created paths: existing trees are never chmodded.
+const (
+	// dirMode is for the content, blobs and uploads roots, upload directories
+	// and blob parent directories.
+	dirMode os.FileMode = 0o750
+	// fileMode is for upload data and state files.
+	fileMode os.FileMode = 0o640
+	// blobMode is for committed blobs: read-only, as before, minus "other".
+	blobMode os.FileMode = 0o440
+)
+
 type Store struct {
 	rootDir       string
 	maxUploadSize int64
@@ -78,7 +93,7 @@ func New(rootDir string, options ...Option) (*Store, error) {
 		}
 	}
 	for _, path := range []string{store.blobsRoot(), store.uploadsRoot()} {
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		if err := os.MkdirAll(path, dirMode); err != nil {
 			return nil, fmt.Errorf("create storage path %q: %w", path, err)
 		}
 	}
@@ -97,12 +112,12 @@ func (s *Store) BeginUpload(_ context.Context, repository domain.RepositoryRef) 
 	}
 
 	uploadDir := s.uploadDir(uploadID)
-	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+	if err := os.MkdirAll(uploadDir, dirMode); err != nil {
 		return domain.UploadState{}, err
 	}
 
 	filePath := filepath.Join(uploadDir, "data")
-	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o644)
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_EXCL|os.O_RDWR, fileMode)
 	if err != nil {
 		return domain.UploadState{}, err
 	}
@@ -312,7 +327,7 @@ func (s *Store) PutUploadChunk(ctx context.Context, uploadID string, content io.
 		return domain.UploadState{}, domain.NewNotFoundError("upload", uploadID)
 	}
 
-	file, err := os.OpenFile(s.uploadFile(uploadID), os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(s.uploadFile(uploadID), os.O_WRONLY|os.O_APPEND, fileMode)
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.uploads.CompareAndDelete(uploadID, entry)
@@ -426,7 +441,7 @@ func (s *Store) CommitUpload(_ context.Context, uploadID string, expected domain
 	}
 
 	finalPath := s.blobPath(actual)
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(finalPath), dirMode); err != nil {
 		return domain.Descriptor{}, err
 	}
 
@@ -472,7 +487,7 @@ func (s *Store) publish(uploadPath string, finalPath string, expected domain.Dig
 		return s.copyIntoStore(uploadPath, finalPath, expected)
 	}
 	// Best effort: a failure here leaves a correct blob, merely not read-only.
-	_ = os.Chmod(finalPath, 0o444)
+	_ = os.Chmod(finalPath, blobMode)
 	return nil
 }
 
@@ -527,7 +542,7 @@ func (s *Store) copyIntoStore(uploadPath string, finalPath string, expected doma
 		err = domain.NewDigestMismatchError(expected, copied)
 		return err
 	}
-	if err = os.Chmod(tempPath, 0o444); err != nil {
+	if err = os.Chmod(tempPath, blobMode); err != nil {
 		return err
 	}
 
@@ -775,7 +790,7 @@ func (s *Store) writeUploadState(state domain.UploadState) error {
 		return err
 	}
 
-	return os.WriteFile(s.uploadStateFile(state.ID), payload, 0o644)
+	return os.WriteFile(s.uploadStateFile(state.ID), payload, fileMode)
 }
 
 func (s *Store) readUploadState(uploadID string) (domain.UploadState, error) {

@@ -1325,7 +1325,7 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error) {
-	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StorageRoot, storageRootMode); err != nil {
 		return nil, nil, err
 	}
 	store, err := metadata.New(cfg.DatabasePath)
@@ -2573,6 +2573,19 @@ func boundedDuration(value time.Duration, fallback time.Duration) time.Duration 
 	return fallback
 }
 
+// storageRootMode is the mode of a storage root created by serve, feature and
+// the TUI: no access for other local users. An existing root is never chmodded.
+const storageRootMode os.FileMode = 0o750
+
+// warnWorldAccessibleStorage logs one warning when an existing storage root or
+// metadata.db can be read or written by other local users, naming the paths
+// and the exact chmod command. It only reports: it never changes a mode.
+func warnWorldAccessibleStorage(logf func(string, ...any), paths ...string) {
+	if message := installlinux.WorldAccessWarning(installlinux.WorldAccessiblePaths(paths...)); message != "" {
+		logf("%s", message)
+	}
+}
+
 func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	var authStore ports.AuthStore
 	var authService ports.AuthService
@@ -2623,7 +2636,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		accessController = ports.NewPrincipalAccessController(ports.Challenge{Realm: bearerRealm, Service: cfg.ServiceName})
 	}
 
-	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StorageRoot, storageRootMode); err != nil {
 		return nil, nil, err
 	}
 
@@ -2636,6 +2649,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	warnWorldAccessibleStorage(log.Printf, cfg.StorageRoot, cfg.DatabasePath)
 
 	service := appregixtry.NewService(
 		blobStore,
@@ -2763,7 +2777,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 }
 
 func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
-	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StorageRoot, storageRootMode); err != nil {
 		return err
 	}
 
