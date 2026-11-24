@@ -31,6 +31,8 @@ sudo /absolute/path/to/regixtry setup --mode daemon-sqlite \
   --addr 127.0.0.1:5000
 ```
 
+Setup is for first installs only: it refuses to run, before writing anything, when `metadata.db`, the content directory, or a previous unit/receipt already exists, and tells you to use `regixtry upgrade` instead. A failed setup removes only what that run created. See [operations](operations.md) for details.
+
 Setup creates the env file, the systemd unit, `metadata.db`, `content/`, the bootstrap receipt, and the lifecycle provenance record. Defaults are `/var/lib/regixtry`, `/etc/regixtry/bootstrap-state.json`, and `/etc/systemd/system/regixtry.service`.
 
 ### Built-in Trivy feature migration

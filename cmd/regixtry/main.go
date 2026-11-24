@@ -45,6 +45,7 @@ var openAuthStore = func(dsn string) (ports.AuthStore, error) {
 
 type bootstrapRunner interface {
 	Run(context.Context, installlinux.BootstrapConfig) error
+	CheckFreshInstall(installlinux.BootstrapConfig) error
 	Rollback(context.Context, installlinux.BootstrapConfig) error
 	Uninstall(context.Context, string) (installlinux.UninstallReport, error)
 	Upgrade(context.Context, installlinux.UpgradeConfig) (installlinux.UpgradeResult, error)
@@ -965,7 +966,7 @@ func parseSetupConfigWithPromptState(args []string) (setupConfig, setupPromptSta
 	defaultPublicURL := os.Getenv("REGISTRY_PUBLIC_URL")
 	defaultAuthPostgresDSN := os.Getenv("REGISTRY_AUTH_POSTGRES_DSN")
 	cfg := setupConfig{}
-	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite or binary-only)")
+	flags.StringVar(&cfg.Mode, "mode", "", "setup mode to apply (daemon-sqlite, docker or binary-only); daemon-sqlite refuses to run over an existing install and never overwrites or removes its data -- use `regixtry upgrade` to move one")
 	flags.StringVar(&cfg.PublicURL, "public-url", defaultPublicURL, "canonical public URL advertised to registry clients")
 	flags.StringVar(&cfg.RuntimeTLSMode, "runtime-tls-mode", "", "runtime TLS mode (local-http, reverse-proxy, or direct-tls)")
 	flags.StringVar(&cfg.TLSCertFile, "tls-cert-file", os.Getenv("REGISTRY_TLS_CERT_FILE"), "path to the TLS certificate PEM file for direct-tls mode")
@@ -1324,7 +1325,7 @@ func runFeature(ctx context.Context, args []string, stdout io.Writer) error {
 }
 
 func openFeatureService(cfg featureConfig) (*appregixtry.Service, func(), error) {
-	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StorageRoot, storageRootMode); err != nil {
 		return nil, nil, err
 	}
 	store, err := metadata.New(cfg.DatabasePath)
@@ -1444,12 +1445,18 @@ func runSetup(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			return err
 		}
 
+		// Refuse an existing install before any side effect, the auth bootstrap
+		// included: setup never overwrites or removes data, `upgrade` moves it.
+		runner := newBootstrapRunner()
+		if err := runner.CheckFreshInstall(cfg.BootstrapConfig); err != nil {
+			return err
+		}
+
 		authOutcome, err := bootstrapSetupAuth(ctx, cfg.Auth)
 		if err != nil {
 			return err
 		}
 
-		runner := newBootstrapRunner()
 		if err := runner.Run(ctx, cfg.BootstrapConfig); err != nil {
 			return upgradeLifecyclePermissionError(err, "daemon-sqlite setup", formatSetupCommand(cfg.BootstrapConfig, false))
 		}
@@ -2566,6 +2573,19 @@ func boundedDuration(value time.Duration, fallback time.Duration) time.Duration 
 	return fallback
 }
 
+// storageRootMode is the mode of a storage root created by serve, feature and
+// the TUI: no access for other local users. An existing root is never chmodded.
+const storageRootMode os.FileMode = 0o750
+
+// warnWorldAccessibleStorage logs one warning when an existing storage root or
+// metadata.db can be read or written by other local users, naming the paths
+// and the exact chmod command. It only reports: it never changes a mode.
+func warnWorldAccessibleStorage(logf func(string, ...any), paths ...string) {
+	if message := installlinux.WorldAccessWarning(installlinux.WorldAccessiblePaths(paths...)); message != "" {
+		logf("%s", message)
+	}
+}
+
 func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	var authStore ports.AuthStore
 	var authService ports.AuthService
@@ -2616,7 +2636,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 		accessController = ports.NewPrincipalAccessController(ports.Challenge{Realm: bearerRealm, Service: cfg.ServiceName})
 	}
 
-	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StorageRoot, storageRootMode); err != nil {
 		return nil, nil, err
 	}
 
@@ -2629,6 +2649,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	warnWorldAccessibleStorage(log.Printf, cfg.StorageRoot, cfg.DatabasePath)
 
 	service := appregixtry.NewService(
 		blobStore,
@@ -2756,7 +2777,7 @@ func newHandler(cfg serveConfig) (stdhttp.Handler, func(), error) {
 }
 
 func runTUI(cfg tuiConfig, stdin io.Reader, stdout io.Writer) error {
-	if err := os.MkdirAll(cfg.StorageRoot, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StorageRoot, storageRootMode); err != nil {
 		return err
 	}
 

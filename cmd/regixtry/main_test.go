@@ -3128,6 +3128,8 @@ func writeManagedFeatureBootstrapState(t *testing.T, storageRoot string, databas
 
 type stubBootstrapRunner struct {
 	runErr              error
+	freshInstallErr     error
+	freshInstallCalls   int
 	runHook             func(installlinux.BootstrapConfig) error
 	rollbackErr         error
 	uninstallErr        error
@@ -3207,6 +3209,12 @@ func (s *stubBootstrapRunner) Run(_ context.Context, cfg installlinux.BootstrapC
 		return s.runHook(cfg)
 	}
 	return s.runErr
+}
+
+func (s *stubBootstrapRunner) CheckFreshInstall(cfg installlinux.BootstrapConfig) error {
+	s.lastConfig = cfg
+	s.freshInstallCalls++
+	return s.freshInstallErr
 }
 
 func (s *stubBootstrapRunner) Rollback(_ context.Context, cfg installlinux.BootstrapConfig) error {

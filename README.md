@@ -203,7 +203,7 @@ curl -fsSL https://raw.githubusercontent.com/desatatufuria/regixtry/main/install
 regixtry setup
 ```
 
-`install.sh` installs the binary; `regixtry setup` then provisions the runtime — `daemon-sqlite` for a Linux/systemd host, or `docker` for a self-contained Docker Compose stack (see [Run as a container](#run-as-a-container) above) — or use `regixtry serve` directly for local/manual runs, as above. Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
+`install.sh` installs the binary; `regixtry setup` then provisions the runtime — `daemon-sqlite` for a Linux/systemd host, or `docker` for a self-contained Docker Compose stack (see [Run as a container](#run-as-a-container) above) — or use `regixtry serve` directly for local/manual runs, as above. Full procedures, including reverse-proxy and direct-TLS modes: [`docs/installation.md`](docs/installation.md). `regixtry setup` is for a first install: it refuses to run over an existing database, content store or previous install files and never overwrites or removes them. To move an existing install to a newer release: `regixtry upgrade` (resolves the latest non-prerelease tag from GitHub Releases automatically, or pass `-ref` to pin one).
 
 ## Try a feature: vulnerability scanning
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ func New(path string, opts ...Option) (*Store, error) {
 
 // newWithBusyTimeout is the test seam for a short busy timeout.
 func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
+	createDatabaseFile(path)
 	db, err := sql.Open("sqlite", sqliteDSNWithBusyTimeout(path, busyTimeoutMillis))
 	if err != nil {
 		return nil, err
@@ -72,6 +74,30 @@ func newWithBusyTimeout(path string, busyTimeoutMillis int) (*Store, error) {
 	}
 
 	return store, nil
+}
+
+// databaseFileMode is the mode of a newly created database file. SQLite gives
+// the -wal and -shm sidecars the mode of the main file, so none of them is
+// accessible to "other" local users: the database holds every repository's
+// metadata, and a local reader would bypass the HTTP authorization layer.
+const databaseFileMode os.FileMode = 0o640
+
+// createDatabaseFile creates an absent database file with databaseFileMode
+// (subject to the umask) before SQLite would create it with its own 0644
+// default. An existing file is left exactly as it is: upgrading never changes
+// the mode of an install's database.
+//
+// Any failure (file exists, missing directory) is ignored on purpose: SQLite
+// then opens the path and reports its own error exactly as before. An empty
+// file is a valid empty SQLite database.
+func createDatabaseFile(path string) {
+	if path == "" || path == ":memory:" || strings.HasPrefix(path, "file:") {
+		return
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, databaseFileMode)
+	if err == nil {
+		_ = file.Close()
+	}
 }
 
 // subjectDigestBackfillMarker names the schema_backfills row that guards
